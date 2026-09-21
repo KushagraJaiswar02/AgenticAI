@@ -12,6 +12,7 @@ class SecretRedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
         message = re.sub(r"(?i)OPENAI_API_KEY\s*=\s*\S+", "[REDACTED]", message)
+        message = re.sub(r"(?i)GEMINI_API_KEY\s*=\s*\S+", "[REDACTED]", message)
         message = re.sub(r"(?i)(api_key|authorization)\s*[:=]\s*\S+", "[REDACTED]", message)
         message = re.sub(r"(?i)bearer\s+\S+", "Bearer [REDACTED]", message)
         record.msg = message
