@@ -43,7 +43,7 @@ V0 is one release implemented through incremental internal stages. The first imp
 
 ### V0.2 tool milestone
 
-V0.2 adds a small, explicit tool layer to the existing provider-neutral orchestration pattern. The first concrete tool is a weather lookup. The weather tool is registered with a tool registry, validated with Pydantic, and executed only after the orchestrator accepts the tool request from the LLM. The LLM does not directly execute tools; JARVIS controls execution and feeds the tool result back into the response flow.
+V0.2 adds a small, explicit tool layer to the existing provider-neutral orchestration pattern. The first concrete tool is a weather lookup. The weather tool is registered with a tool registry, validated with Pydantic, and executed only after the LLM makes a native function/tool call that the orchestrator accepts. The LLM does not directly execute tools; JARVIS controls execution and feeds the structured tool result back through the provider's native function-response flow.
 
 ## Locked V0 Technology Stack
 

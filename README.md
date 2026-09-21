@@ -4,7 +4,7 @@ JARVIS is a local Python terminal assistant with a provider-neutral LLM interfac
 
 ## Current milestone
 
-V0.2 adds a small, explicit tool layer. The first tool is a weather lookup that is executed only when the LLM requests it through the normal provider abstraction. The orchestrator remains provider-agnostic and does not branch on provider-specific logic.
+V0.2 adds a small, explicit tool layer with native LLM function/tool calling. The first tool is a weather lookup that is executed only when the LLM natively requests it through the provider abstraction. The orchestrator remains provider-agnostic and does not branch on provider-specific logic.
 
 ## Setup
 

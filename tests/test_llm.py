@@ -9,7 +9,7 @@ from app.openai_provider import OpenAIProvider
 
 
 class FakeLLM(LLMProvider):
-    def generate(self, prompt: str) -> LLMResponse:
+    def generate(self, prompt: str, tools=None, *, tool_call=None, tool_result=None) -> LLMResponse:
         return LLMResponse(text=f"reply: {prompt}")
 
 

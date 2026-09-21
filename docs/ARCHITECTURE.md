@@ -82,6 +82,12 @@ The active V0 default is Gemini via the official Google Gen AI SDK. OpenAI remai
 
 The active default model is `gemini-3.8-flash`, configured through `GEMINI_MODEL`. The fallback model is `gpt-5.6-luna`, configured through `OPENAI_MODEL`. Both APIs are accessed through provider adapters and environment configuration. No direct API calls are embedded in application business logic.
 
+For V0.2 tooling, providers expose native function/tool-calling capabilities through the same provider-neutral contract:
+- the LLM decides whether a tool is needed and which tool to call
+- the tool registry decides what can execute and validates arguments
+- the tool implementation executes the capability
+- the orchestrator coordinates the request → tool call → tool result → final LLM response loop
+
 ### Tool System
 
 Tools are explicit capabilities.
@@ -145,7 +151,7 @@ The initial TTS implementation uses the OpenAI audio API behind a TTS interface.
 
 - The input layer depends on input interfaces and delivers normalized text to the orchestrator.
 - The orchestrator depends on interfaces for LLM, tools, memory, persistence, permissions, and response handling; it does not contain provider or tool implementation details.
-- The LLM adapter is the only component that depends on the official OpenAI Python SDK and Responses API. It reads `OPENAI_API_KEY` and `OPENAI_MODEL` through configuration and implements the provider-neutral LLM interface.
+- Provider adapters are the only components that depend on provider SDKs and API-specific message structures (Google Gen AI SDK for Gemini, OpenAI SDK for OpenAI). Adapters read provider configuration and implement the same provider-neutral LLM interface.
 - The tool registry exposes validated Pydantic tool schemas and metadata to the orchestrator; tools never call the LLM directly.
 - The permission manager runs outside the LLM and must approve or reject every operation requiring authorization before execution.
 - System tools depend on allowlisted subprocess execution and, where required, pywinauto; they cannot invoke arbitrary shell commands.

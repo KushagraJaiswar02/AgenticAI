@@ -7,7 +7,7 @@ import logging
 
 from app.errors import ApplicationError, UnexpectedApplicationError
 from app.input import normalize_input
-from app.llm import LLMProvider
+from app.llm import LLMProvider, ToolCall
 from app.tools import ToolExecutionResult, ToolRegistry
 
 
@@ -29,20 +29,21 @@ class Orchestrator:
         if not normalized:
             raise ApplicationError("Message must not be empty")
         try:
-            response = self._llm.generate(normalized)
+            response = self._llm.generate(normalized, tools=self._tool_registry.definitions())
             if response.tool_call is None:
                 return response.text
 
-            tool_result = self._tool_registry.execute(response.tool_call.name, response.tool_call.arguments)
+            tool_call = response.tool_call
+            tool_result = self._tool_registry.execute(tool_call.name, tool_call.arguments)
             if not tool_result.success:
-                return self._tool_failure_message(response.tool_call.name, tool_result.error)
+                return self._tool_failure_message(tool_call.name, tool_result.error)
 
-            final_prompt = (
-                f"User request: {normalized}\n"
-                f"Tool result: {json.dumps(tool_result.data, ensure_ascii=False)}\n"
-                "Return a short, natural-language answer based on the tool result."
+            follow_up = self._llm.generate(
+                normalized,
+                tools=self._tool_registry.definitions(),
+                tool_call=tool_call,
+                tool_result=tool_result.data or {},
             )
-            follow_up = self._llm.generate(final_prompt)
             return follow_up.text.strip() or self._tool_success_summary(tool_result)
         except ApplicationError:
             raise

@@ -5,7 +5,7 @@ import pytest
 from app.errors import ApplicationError
 from app.llm import LLMResponse, ToolCall
 from app.orchestrator import Orchestrator
-from app.tools import ToolExecutionError, ToolRegistry, UnknownToolError, WeatherTool
+from app.tools import ToolExecutionError, ToolExecutionResult, ToolRegistry, UnknownToolError, WeatherTool
 
 
 class FakeResponse:
@@ -22,9 +22,11 @@ class FakeResponse:
 class FakeLLM:
     def __init__(self):
         self.calls = 0
+        self.last_tool_result = None
 
-    def generate(self, prompt: str) -> LLMResponse:
+    def generate(self, prompt: str, tools=None, *, tool_call=None, tool_result=None) -> LLMResponse:
         self.calls += 1
+        self.last_tool_result = tool_result
         if self.calls == 1:
             return LLMResponse(
                 text="I will check the weather for Paris.",
@@ -85,6 +87,16 @@ def test_weather_tool_handles_external_failure(monkeypatch: pytest.MonkeyPatch) 
         WeatherTool().execute({"location": "Paris"})
 
 
+def test_weather_tool_definition_is_exposed() -> None:
+    definitions = ToolRegistry([WeatherTool()]).definitions()
+    assert len(definitions) == 1
+    definition = definitions[0]
+    assert definition.name == "weather"
+    assert definition.parameters["type"] == "object"
+    assert "location" in definition.parameters["properties"]
+    assert definition.parameters["required"] == ["location"]
+
+
 def test_orchestrator_executes_tool_and_reformats_response(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_get(url, params=None, timeout=None):
         if "geocoding-api" in url:
@@ -109,3 +121,16 @@ def test_orchestrator_executes_tool_and_reformats_response(monkeypatch: pytest.M
 
     assert result == "The current temperature in Paris is 18°C."
     assert llm.calls == 2
+    assert llm.last_tool_result["location"] == "Paris"
+
+
+class FailingWeatherTool(WeatherTool):
+    def execute(self, arguments):
+        return ToolExecutionResult(success=False, data=None, error="service unavailable")
+
+
+def test_orchestrator_reports_tool_failure_message() -> None:
+    llm = FakeLLM()
+    orchestrator = Orchestrator(llm, tool_registry=ToolRegistry([FailingWeatherTool()]))
+    result = orchestrator.process("weather in Paris")
+    assert "service unavailable" in result

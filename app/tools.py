@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -11,7 +10,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.errors import ApplicationError
-from app.llm import ToolCall
+from app.llm import ToolDefinition
 
 
 class ToolError(ApplicationError):
@@ -86,6 +85,27 @@ class ToolRegistry:
     def list(self) -> list[str]:
         """Return the names of all registered tools."""
         return sorted(self._tools)
+
+    def definitions(self) -> list[ToolDefinition]:
+        """Expose the registry's tool schemas to provider-neutral LLM calls."""
+        return [
+            ToolDefinition(
+                name=tool.name,
+                description=tool.description,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        name: {
+                            "type": value.get("type", "string"),
+                            "description": value.get("description", ""),
+                        }
+                        for name, value in getattr(tool.input_model, "model_json_schema", lambda: {"properties": {}})().get("properties", {}).items()
+                    },
+                    "required": getattr(tool.input_model, "model_json_schema", lambda: {"required": []})().get("required", []),
+                },
+            )
+            for tool in self._tools.values()
+        ]
 
     def execute(self, name: str, arguments: dict[str, Any]) -> ToolExecutionResult:
         """Execute a registered tool by name."""
@@ -170,17 +190,3 @@ class WeatherTool(Tool):
             if isinstance(exc, ToolExecutionError):
                 raise
             raise ToolExecutionError(f"Weather service unavailable for '{location}'") from exc
-
-
-def detect_tool_call(prompt: str) -> ToolCall | None:
-    """Heuristic tool request detection for the V0.2 text pipeline."""
-    text = prompt.strip()
-    if not text or "weather" not in text.lower():
-        return None
-    match = re.search(r"(?:weather|temperature|forecast)(?:\s+(?:in|at|for|around))?\s+(.+)", text, flags=re.IGNORECASE)
-    if not match:
-        return None
-    location = match.group(1).strip(" ?.!;")
-    if not location:
-        return None
-    return ToolCall(name="weather", arguments={"location": location})
