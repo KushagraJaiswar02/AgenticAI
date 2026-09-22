@@ -87,6 +87,16 @@ def test_weather_tool_handles_external_failure(monkeypatch: pytest.MonkeyPatch) 
         WeatherTool().execute({"location": "Paris"})
 
 
+def test_weather_tool_handles_malformed_external_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_get(url, params=None, timeout=None):
+        return FakeResponse({"unexpected": "payload"})
+
+    monkeypatch.setattr("app.tools.httpx.get", fake_get)
+
+    with pytest.raises(ToolExecutionError, match="No weather data found"):
+        WeatherTool().execute({"location": "Paris"})
+
+
 def test_weather_tool_definition_is_exposed() -> None:
     definitions = ToolRegistry([WeatherTool()]).definitions()
     assert len(definitions) == 1

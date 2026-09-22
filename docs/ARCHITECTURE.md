@@ -224,7 +224,20 @@ LLM, STT, TTS, vector store, and browser implementations should be replaceable t
 
 Avoid coupling core business logic to a single provider.
 
-## 7. v0 Boundary
+## 7. Testing Boundaries
+
+Application tests use a provider-neutral `FakeLLMProvider` that returns
+predetermined `LLMResponse` values, including predetermined `ToolCall`
+decisions. It exists to test orchestration and tool behavior deterministically;
+it does not simulate intelligence or natural-language understanding.
+
+The normal test suite must not require Gemini, OpenAI, DNS, Wi-Fi, or the
+external weather service. Provider adapter tests mock provider SDKs, while
+orchestrator integration tests use the real orchestrator and registry with the
+fake provider. Real cloud tests are separate, explicitly marked `integration`,
+and are run only on request.
+
+## 8. v0 Boundary
 
 Do not introduce:
 - microservices

@@ -58,19 +58,34 @@ Maintain `.env.example` containing variable names only.
 - Add tests for core orchestration and tools.
 - Avoid unnecessary global state.
 
-## 5. Suggested Commands
+## 5. Test Layers
+
+Tests are separated by responsibility:
+
+- **Unit tests** cover configuration, normalization, tool schemas, registry behavior, weather parsing, and `FakeLLMProvider`.
+- **Provider tests** mock the Gemini and OpenAI SDKs and verify adapter normalization, native tool calls, errors, and Gemini thought-signature context preservation.
+- **Orchestrator integration tests** use the real `Orchestrator` and `ToolRegistry` with `FakeLLMProvider`. They verify deterministic tool selection, execution, result handoff, failures, and sequential interactions without Gemini, OpenAI, DNS, Wi-Fi, or external weather services.
+- **Live integration tests**, when present, must be marked `integration` and are never part of the default offline suite. They may fail because of network, quota, rate-limit, availability, or provider-outage conditions.
+
+`FakeLLMProvider` exists only for deterministic application tests. It returns
+predetermined provider-neutral responses and records calls; it does not
+simulate intelligence or natural-language understanding.
+
+## 6. Suggested Commands
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python -m app.main
-pytest
+python -m pytest -q
+python -m pytest -m integration
 ```
 
-Commands may change as implementation develops.
+The first test command is the normal offline suite. The second explicitly runs
+tests marked `integration`.
 
-## 6. Incremental V0 Stages
+## 7. Incremental V0 Stages
 
 V0 is one release with these internal stages:
 

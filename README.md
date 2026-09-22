@@ -30,3 +30,15 @@ Type a message at the `User:` prompt. Enter `exit` or `quit` to stop.
 ```powershell
 python -m pytest -q
 ```
+
+The normal suite is deterministic and offline: it uses `FakeLLMProvider` for
+orchestrator integration tests and mocks the weather HTTP layer. The fake
+provider returns predetermined `LLMResponse` objects; it does not simulate
+intelligence or natural-language understanding.
+
+Provider adapter tests mock the Gemini and OpenAI SDKs. Any future live Gemini
+tests must be marked `integration` and run explicitly:
+
+```powershell
+python -m pytest -m integration
+```

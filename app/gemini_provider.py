@@ -20,6 +20,7 @@ class GeminiProvider(LLMProvider):
             raise LLMProviderError("Gemini API key is not configured")
         self._client = client or genai.Client(api_key=settings.gemini_api_key)
         self._model = settings.gemini_model
+        self._pending_tool_context: Any | None = None
 
     def generate(
         self,
@@ -32,6 +33,7 @@ class GeminiProvider(LLMProvider):
         if tool_result is not None and tool_call is not None:
             return self._generate_after_tool_result(prompt, tool_call, tool_result)
 
+        self._pending_tool_context = None
         tool_declarations = self._to_tool_declarations(tools or [])
         config = None
         if tool_declarations:
@@ -44,15 +46,22 @@ class GeminiProvider(LLMProvider):
                 config=config,
             )
         except Exception as exc:
+            self._pending_tool_context = None
             raise LLMProviderError("Gemini request failed") from exc
 
         call = self._extract_tool_call(response)
         if call is not None:
+            model_content = self._get_model_content(response)
+            if model_content is None:
+                raise InvalidProviderResponseError("Gemini returned a malformed function call")
+            self._pending_tool_context = model_content
             return LLMResponse(text="", tool_call=call)
 
         text = getattr(response, "text", None)
         if not isinstance(text, str) or not text.strip():
+            self._pending_tool_context = None
             raise InvalidProviderResponseError("Gemini returned an invalid response")
+        self._pending_tool_context = None
         return LLMResponse(text=text.strip())
 
     def _generate_after_tool_result(
@@ -61,31 +70,41 @@ class GeminiProvider(LLMProvider):
         tool_call: ToolCall,
         tool_result: dict[str, Any],
     ) -> LLMResponse:
-        function_call = types.Part.from_function_call(
-            name=tool_call.name,
-            args=tool_call.arguments,
-        )
-        function_response = types.Part.from_function_response(
-            name=tool_call.name,
-            response={"result": tool_result},
-        )
-        contents = [
-            types.Content(role="user", parts=[types.Part.from_text(text=prompt)]),
-            types.Content(role="model", parts=[function_call]),
-            types.Content(role="user", parts=[function_response]),
-        ]
         try:
+            model_content = self._pending_tool_context
+            if model_content is None:
+                raise InvalidProviderResponseError("Gemini tool-call context is no longer available")
+
+            function_response = types.Part.from_function_response(
+                name=tool_call.name,
+                response={"result": tool_result},
+            )
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text=prompt)]),
+                model_content,
+                types.Content(role="user", parts=[function_response]),
+            ]
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
             )
+            text = getattr(response, "text", None)
+            if not isinstance(text, str) or not text.strip():
+                raise InvalidProviderResponseError("Gemini returned an invalid response")
+            return LLMResponse(text=text.strip())
+        except InvalidProviderResponseError:
+            raise
         except Exception as exc:
             raise LLMProviderError("Gemini request failed") from exc
+        finally:
+            self._pending_tool_context = None
 
-        text = getattr(response, "text", None)
-        if not isinstance(text, str) or not text.strip():
-            raise InvalidProviderResponseError("Gemini returned an invalid response")
-        return LLMResponse(text=text.strip())
+    @staticmethod
+    def _get_model_content(response: Any) -> Any | None:
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return None
+        return getattr(candidates[0], "content", None)
 
     def _extract_tool_call(self, response: Any) -> ToolCall | None:
         try:
