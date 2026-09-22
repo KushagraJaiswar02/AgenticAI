@@ -88,6 +88,12 @@ For V0.2 tooling, providers expose native function/tool-calling capabilities thr
 - the tool implementation executes the capability
 - the orchestrator coordinates the request → tool call → tool result → final LLM response loop
 
+If the configured provider raises `LLMProviderError`, the orchestrator may
+consult a small deterministic local intent router. The router recognizes only
+explicitly supported local intents and returns the existing provider-neutral
+`ToolCall`; it never executes tools. The tool registry remains the single
+execution authority. Unrecognized requests re-raise the provider failure.
+
 ### Tool System
 
 Tools are explicit capabilities.

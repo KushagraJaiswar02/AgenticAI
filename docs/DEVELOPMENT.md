@@ -65,6 +65,7 @@ Tests are separated by responsibility:
 - **Unit tests** cover configuration, normalization, tool schemas, registry behavior, weather parsing, and `FakeLLMProvider`.
 - **Provider tests** mock the Gemini and OpenAI SDKs and verify adapter normalization, native tool calls, errors, and Gemini thought-signature context preservation.
 - **Orchestrator integration tests** use the real `Orchestrator` and `ToolRegistry` with `FakeLLMProvider`. They verify deterministic tool selection, execution, result handoff, failures, and sequential interactions without Gemini, OpenAI, DNS, Wi-Fi, or external weather services.
+- **Local fallback tests** verify that only recoverable `LLMProviderError` failures invoke the deterministic `LocalIntentRouter`; non-provider failures and unrecognized intents do not use it.
 - **Live integration tests**, when present, must be marked `integration` and are never part of the default offline suite. They may fail because of network, quota, rate-limit, availability, or provider-outage conditions.
 
 `FakeLLMProvider` exists only for deterministic application tests. It returns

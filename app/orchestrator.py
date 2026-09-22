@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
-from app.errors import ApplicationError, UnexpectedApplicationError
+from app.errors import ApplicationError, LLMProviderError, UnexpectedApplicationError
 from app.input import normalize_input
 from app.llm import LLMProvider, ToolCall
+from app.local_router import LocalIntentRouter
 from app.tools import ToolExecutionResult, ToolRegistry
 
 
@@ -19,17 +19,27 @@ class Orchestrator:
         llm: LLMProvider,
         tool_registry: ToolRegistry | None = None,
         logger: logging.Logger | None = None,
+        local_router: LocalIntentRouter | None = None,
     ) -> None:
         self._llm = llm
         self._tool_registry = tool_registry or ToolRegistry()
         self._logger = logger or logging.getLogger("jarvis")
+        self._local_router = local_router or LocalIntentRouter()
 
     def process(self, user_message: str) -> str:
         normalized = normalize_input(user_message)
         if not normalized:
             raise ApplicationError("Message must not be empty")
         try:
-            response = self._llm.generate(normalized, tools=self._tool_registry.definitions())
+            try:
+                response = self._llm.generate(normalized, tools=self._tool_registry.definitions())
+            except LLMProviderError:
+                fallback_call = self._local_router.route(normalized)
+                if fallback_call is None:
+                    raise
+                self._logger.warning("Using local intent fallback for tool '%s'", fallback_call.name)
+                return self._execute_local_fallback(fallback_call)
+
             if response.tool_call is None:
                 return response.text
 
@@ -50,6 +60,12 @@ class Orchestrator:
         except Exception as exc:
             self._logger.exception("Unexpected orchestration failure")
             raise UnexpectedApplicationError("Unable to process the request") from exc
+
+    def _execute_local_fallback(self, tool_call: ToolCall) -> str:
+        tool_result = self._tool_registry.execute(tool_call.name, tool_call.arguments)
+        if not tool_result.success:
+            return self._tool_failure_message(tool_call.name, tool_result.error)
+        return self._tool_success_summary(tool_result)
 
     def _tool_failure_message(self, tool_name: str, error: str | None) -> str:
         if error:

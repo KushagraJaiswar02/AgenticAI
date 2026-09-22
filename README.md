@@ -36,6 +36,13 @@ orchestrator integration tests and mocks the weather HTTP layer. The fake
 provider returns predetermined `LLMResponse` objects; it does not simulate
 intelligence or natural-language understanding.
 
+If the configured cloud provider raises a recoverable `LLMProviderError`, the
+orchestrator may use the deterministic `LocalIntentRouter` for a small set of
+obvious weather requests. The router emits the same provider-neutral
+`ToolCall` used by cloud providers; the `ToolRegistry` remains the only
+component allowed to execute tools. It is a fallback, not a replacement for
+the LLM.
+
 Provider adapter tests mock the Gemini and OpenAI SDKs. Any future live Gemini
 tests must be marked `integration` and run explicitly:
 
