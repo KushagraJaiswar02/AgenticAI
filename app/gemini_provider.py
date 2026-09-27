@@ -18,7 +18,12 @@ class GeminiProvider(LLMProvider):
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
         if not settings.gemini_api_key:
             raise LLMProviderError("Gemini API key is not configured")
-        self._client = client or genai.Client(api_key=settings.gemini_api_key)
+        self._client = client or genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(
+                timeout=int(settings.gemini_timeout * 1000),
+            ),
+        )
         self._model = settings.gemini_model
         self._pending_tool_context: Any | None = None
 
@@ -29,7 +34,9 @@ class GeminiProvider(LLMProvider):
         *,
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
+        think: bool | None = None,
     ) -> LLMResponse:
+        del think
         if tool_result is not None and tool_call is not None:
             return self._generate_after_tool_result(prompt, tool_call, tool_result)
 

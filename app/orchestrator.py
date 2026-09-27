@@ -33,11 +33,20 @@ class Orchestrator:
         try:
             try:
                 response = self._llm.generate(normalized, tools=self._tool_registry.definitions())
-            except LLMProviderError:
+            except LLMProviderError as exc:
                 fallback_call = self._local_router.route(normalized)
                 if fallback_call is None:
+                    self._logger.warning(
+                        "LLM provider unavailable and no local capability matched"
+                    )
+                    self._logger.debug("LLM provider failure details", exc_info=True)
                     raise
-                self._logger.warning("Using local intent fallback for tool '%s'", fallback_call.name)
+                self._logger.warning(
+                    "LLM provider unavailable; attempting local fallback for '%s': %s",
+                    fallback_call.name,
+                    exc,
+                )
+                self._logger.debug("LLM provider failure details", exc_info=True)
                 return self._execute_local_fallback(fallback_call)
 
             if response.tool_call is None:
@@ -80,4 +89,17 @@ class Orchestrator:
             location = tool_result.data.get("location", "that location")
             if temperature is not None:
                 return f"The current temperature in {location} is {temperature}°C."
+        if "time" in tool_result.data:
+            return f"The current local time is {tool_result.data['time']}."
+        if "date" in tool_result.data:
+            return f"Today is {tool_result.data['date']} ({tool_result.data.get('day', 'local time')})."
+        if "result" in tool_result.data:
+            return f"The result is {tool_result.data['result']}."
+        if "python_version" in tool_result.data:
+            return (
+                f"You are running {tool_result.data.get('os', 'an unknown OS')} "
+                f"with Python {tool_result.data['python_version']}."
+            )
+        if tool_result.data.get("status") == "launched":
+            return f"I opened {tool_result.data.get('application', 'the application')}."
         return "I completed the request."

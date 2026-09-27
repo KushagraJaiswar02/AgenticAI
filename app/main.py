@@ -6,13 +6,21 @@ import logging
 
 from app.config import ConfigurationError, load_settings
 from app.database import Database
-from app.errors import ApplicationError
+from app.errors import ApplicationError, LLMProviderError, UnexpectedApplicationError
 from app.input import read_input
 from app.logging_config import configure_logging
 from app.orchestrator import Orchestrator
 from app.provider_factory import create_llm_provider
 from app.response import render_response
-from app.tools import ToolRegistry, WeatherTool
+from app.tools import (
+    CalculatorTool,
+    DateTool,
+    OpenApplicationTool,
+    SystemInfoTool,
+    TimeTool,
+    ToolRegistry,
+    WeatherTool,
+)
 
 
 def main() -> int:
@@ -28,8 +36,17 @@ def main() -> int:
         logger.error("Application startup failed: %s", exc)
         return 1
 
-    tool_registry = ToolRegistry([WeatherTool()])
-    orchestrator = Orchestrator(create_llm_provider(settings), tool_registry=tool_registry, logger=logger)
+    tool_registry = ToolRegistry(
+        [
+            WeatherTool(),
+            TimeTool(),
+            DateTool(),
+            CalculatorTool(),
+            SystemInfoTool(),
+            OpenApplicationTool(),
+        ]
+    )
+    orchestrator = Orchestrator(llm_provider, tool_registry=tool_registry, logger=logger)
 
     print("JARVIS V0.1. Type 'exit' or 'quit' to stop.")
     while True:
@@ -42,8 +59,15 @@ def main() -> int:
             return 0
         try:
             print(render_response(orchestrator.process(message)))
-        except ApplicationError as exc:
+        except LLMProviderError:
+            logger.warning("LLM provider unavailable and no local capability matched")
+            logger.debug("LLM provider failure details", exc_info=True)
+            print("JARVIS: I could not process that request.")
+        except UnexpectedApplicationError as exc:
             logger.exception("Request failed: %s", exc)
+            print("JARVIS: I could not process that request.")
+        except ApplicationError as exc:
+            logger.error("Request failed: %s", exc)
             print("JARVIS: I could not process that request.")
 
 

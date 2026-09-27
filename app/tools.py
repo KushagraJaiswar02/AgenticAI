@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import ast
+import os
+import operator
+import platform
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any, Iterable
 
 import httpx
@@ -190,3 +197,186 @@ class WeatherTool(Tool):
             if isinstance(exc, ToolExecutionError):
                 raise
             raise ToolExecutionError(f"Weather service unavailable for '{location}'") from exc
+
+
+class EmptyInput(BaseModel):
+    """Input schema for tools that require no arguments."""
+
+
+class TimeTool(Tool):
+    """Return the current local time."""
+
+    name = "time"
+    description = "Get the current local time."
+    input_model = EmptyInput
+
+    def execute(self, arguments: EmptyInput | dict[str, Any]) -> ToolExecutionResult:
+        try:
+            return ToolExecutionResult(
+                success=True,
+                data={"time": datetime.now().strftime("%H:%M:%S"), "timezone": "local"},
+            )
+        except Exception as exc:
+            raise ToolExecutionError("Unable to read the local time") from exc
+
+
+class DateTool(Tool):
+    """Return the current local date."""
+
+    name = "date"
+    description = "Get today's local date."
+    input_model = EmptyInput
+
+    def execute(self, arguments: EmptyInput | dict[str, Any]) -> ToolExecutionResult:
+        try:
+            current = date.today()
+            return ToolExecutionResult(
+                success=True,
+                data={"date": current.isoformat(), "day": current.strftime("%A")},
+            )
+        except Exception as exc:
+            raise ToolExecutionError("Unable to read the local date") from exc
+
+
+class CalculatorInput(BaseModel):
+    """Input schema for safe arithmetic evaluation."""
+
+    expression: str
+
+
+class CalculatorTool(Tool):
+    """Evaluate a deliberately restricted arithmetic expression."""
+
+    name = "calculator"
+    description = "Evaluate a basic arithmetic expression safely."
+    input_model = CalculatorInput
+
+    _BINARY_OPERATORS = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.Mod: operator.mod,
+    }
+    _UNARY_OPERATORS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+    def execute(self, arguments: CalculatorInput | dict[str, Any]) -> ToolExecutionResult:
+        expression = (
+            arguments.expression
+            if isinstance(arguments, CalculatorInput)
+            else str(arguments.get("expression", ""))
+        ).strip()
+        if not expression:
+            raise ToolArgumentError("Calculator requires a non-empty expression")
+
+        try:
+            tree = ast.parse(expression, mode="eval")
+            result = self._evaluate(tree.body)
+        except ToolArgumentError:
+            raise
+        except ZeroDivisionError as exc:
+            raise ToolExecutionError("Calculator cannot divide by zero") from exc
+        except (SyntaxError, TypeError, ValueError) as exc:
+            raise ToolExecutionError("Calculator expression is invalid or unsafe") from exc
+        except Exception as exc:
+            raise ToolExecutionError("Calculator failed to evaluate the expression") from exc
+
+        return ToolExecutionResult(
+            success=True,
+            data={"expression": expression, "result": result},
+        )
+
+    @classmethod
+    def _evaluate(cls, node: ast.AST) -> int | float:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in cls._BINARY_OPERATORS:
+            return cls._BINARY_OPERATORS[type(node.op)](
+                cls._evaluate(node.left),
+                cls._evaluate(node.right),
+            )
+        if isinstance(node, ast.UnaryOp) and type(node.op) in cls._UNARY_OPERATORS:
+            return cls._UNARY_OPERATORS[type(node.op)](cls._evaluate(node.operand))
+        raise ToolExecutionError("Calculator expression is invalid or unsafe")
+
+
+class SystemInfoTool(Tool):
+    """Return non-sensitive local runtime information."""
+
+    name = "system_info"
+    description = "Get basic non-sensitive operating system and runtime information."
+    input_model = EmptyInput
+
+    def execute(self, arguments: EmptyInput | dict[str, Any]) -> ToolExecutionResult:
+        try:
+            return ToolExecutionResult(
+                success=True,
+                data={
+                    "os": platform.system(),
+                    "platform": platform.platform(),
+                    "architecture": platform.machine(),
+                    "python_version": platform.python_version(),
+                },
+            )
+        except Exception as exc:
+            raise ToolExecutionError("Unable to read system information") from exc
+
+
+class OpenApplicationInput(BaseModel):
+    """Input schema for the allowlisted application launcher."""
+
+    name: str
+
+
+class OpenApplicationTool(Tool):
+    """Launch only explicitly allowlisted desktop applications."""
+
+    name = "open_application"
+    description = "Open an allowlisted desktop application by name."
+    input_model = OpenApplicationInput
+    _ALLOWLIST = {"brave"}
+
+    def execute(
+        self,
+        arguments: OpenApplicationInput | dict[str, Any],
+    ) -> ToolExecutionResult:
+        requested = (
+            arguments.name
+            if isinstance(arguments, OpenApplicationInput)
+            else str(arguments.get("name", ""))
+        ).strip().lower()
+        if requested not in self._ALLOWLIST:
+            return ToolExecutionResult(
+                success=False,
+                error=f"Application '{requested}' is not allowlisted",
+            )
+
+        executable = self._find_executable(requested)
+        if executable is None:
+            return ToolExecutionResult(
+                success=False,
+                error=f"Application '{requested}' was not found",
+            )
+        try:
+            subprocess.Popen([executable], shell=False)
+        except OSError as exc:
+            raise ToolExecutionError(
+                f"Unable to launch application '{requested}'"
+            ) from exc
+        return ToolExecutionResult(
+            success=True,
+            data={"application": requested, "status": "launched"},
+        )
+
+    @staticmethod
+    def _find_executable(name: str) -> str | None:
+        if name != "brave":
+            return None
+        discovered = shutil.which("brave") or shutil.which("brave.exe")
+        if discovered:
+            return discovered
+        candidates = (
+            r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+            r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+        )
+        return next((candidate for candidate in candidates if os.path.exists(candidate)), None)

@@ -1,0 +1,142 @@
+"""Request-scoped failover across configured LLM providers."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from app.config import Settings
+from app.errors import InvalidProviderResponseError, LLMProviderError
+from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+
+
+class ProviderManager(LLMProvider):
+    """Try configured providers in priority order for each request."""
+
+    def __init__(
+        self,
+        providers: list[tuple[str, LLMProvider]],
+        *,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._providers = providers
+        self._logger = logger or logging.getLogger("jarvis")
+        self._active_provider: str | None = None
+        self.provider = providers[0][0] if providers else None
+
+    def generate(
+        self,
+        prompt: str,
+        tools: list[ToolDefinition] | None = None,
+        *,
+        tool_call: ToolCall | None = None,
+        tool_result: dict[str, Any] | None = None,
+        think: bool | None = None,
+    ) -> LLMResponse:
+        continuation = tool_call is not None and tool_result is not None
+        candidates = self._ordered_candidates(continuation=continuation)
+        failures: list[Exception] = []
+        for name, provider in candidates:
+            self._logger.info("LLM request starting with provider='%s'", name)
+            try:
+                response = provider.generate(
+                    prompt,
+                    tools=tools,
+                    tool_call=tool_call,
+                    tool_result=tool_result,
+                    think=think,
+                )
+                self._active_provider = name if response.tool_call is not None else None
+                self._logger.info("LLM provider '%s' succeeded", name)
+                return response
+            except (LLMProviderError, InvalidProviderResponseError) as exc:
+                failures.append(exc)
+                self._logger.warning("LLM provider '%s' failed: %s", name, self._safe_reason(exc))
+                continue
+            except Exception as exc:
+                failures.append(exc)
+                self._logger.warning("LLM provider '%s' failed unexpectedly", name)
+                self._logger.debug("Provider failure details", exc_info=True)
+                continue
+
+        self._active_provider = None
+        raise LLMProviderError("All configured LLM providers are currently unavailable") from (
+            failures[-1] if failures else None
+        )
+
+    def _ordered_candidates(self, *, continuation: bool) -> list[tuple[str, LLMProvider]]:
+        if continuation and self._active_provider is not None:
+            return [
+                (name, provider)
+                for name, provider in self._providers
+                if name == self._active_provider
+            ]
+        if not continuation:
+            return self._providers
+        return self._providers
+
+    @staticmethod
+    def _safe_reason(error: Exception) -> str:
+        text = str(error).lower()
+        if "timeout" in text or "timed out" in text:
+            return "timeout"
+        if "rate" in text or "429" in text:
+            return "rate limited"
+        if "auth" in text or "401" in text or "403" in text:
+            return "authentication failed"
+        if "invalid" in text or "malformed" in text or "empty" in text:
+            return "invalid response"
+        if "unavailable" in text or "connection" in text or "dns" in text:
+            return "unavailable"
+        return error.__class__.__name__
+
+
+def create_provider_manager(
+    settings: Settings,
+    *,
+    logger: logging.Logger | None = None,
+    constructors: dict[str, Callable[[Settings], LLMProvider]] | None = None,
+) -> ProviderManager:
+    from app.gemini_provider import GeminiProvider
+    from app.ollama_provider import OllamaProvider
+    from app.openai_provider import OpenAIProvider
+
+    available: dict[str, Callable[[Settings], LLMProvider]] = constructors or {
+        "gemini": GeminiProvider,
+        "openai": OpenAIProvider,
+        "groq": __import__("app.groq_provider", fromlist=["GroqProvider"]).GroqProvider,
+        "cerebras": __import__("app.cerebras_provider", fromlist=["CerebrasProvider"]).CerebrasProvider,
+        "openrouter": __import__("app.openrouter_provider", fromlist=["OpenRouterProvider"]).OpenRouterProvider,
+        "cohere": __import__("app.cohere_provider", fromlist=["CohereProvider"]).CohereProvider,
+        "mistral": __import__("app.mistral_provider", fromlist=["MistralProvider"]).MistralProvider,
+        "ollama": OllamaProvider,
+    }
+    configured_keys = {
+        "gemini": settings.gemini_api_key,
+        "openai": settings.openai_api_key,
+        "groq": settings.groq_api_key and settings.groq_model,
+        "cerebras": settings.cerebras_api_key and settings.cerebras_model,
+        "openrouter": settings.openrouter_api_key and settings.openrouter_model,
+        "cohere": settings.cohere_api_key and settings.cohere_model,
+        "mistral": settings.mistral_api_key and settings.mistral_model,
+        "ollama": True,
+    }
+    ordered_names = [settings.llm_provider] + [
+        name for name in settings.llm_provider_order if name != settings.llm_provider
+    ]
+    providers: list[tuple[str, LLMProvider]] = []
+    for name in ordered_names:
+        constructor = available.get(name)
+        if constructor is None:
+            continue
+        if not configured_keys.get(name):
+            if logger:
+                logger.info("provider=%s status=skipped reason=missing_configuration", name)
+            continue
+        try:
+            providers.append((name, constructor(settings)))
+        except (LLMProviderError, InvalidProviderResponseError):
+            continue
+    if not providers:
+        raise LLMProviderError("No configured LLM providers are available")
+    return ProviderManager(providers, logger=logger)

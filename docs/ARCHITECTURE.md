@@ -94,6 +94,75 @@ explicitly supported local intents and returns the existing provider-neutral
 `ToolCall`; it never executes tools. The tool registry remains the single
 execution authority. Unrecognized requests re-raise the provider failure.
 
+The provider manager owns request-scoped failover. It starts with
+`LLM_PROVIDER`, then follows `LLM_PROVIDER_ORDER`, skips unavailable
+implementations/configuration, applies finite request timeouts, and finally
+tries Ollama when configured. A failed provider is not permanently disabled.
+If all providers fail, a controlled `LLMProviderError` is returned to the
+existing application failure path.
+
+Ollama is the only provider that uses task-complexity routing. A local,
+deterministic classifier selects `think=false` for simple requests and
+`think=true` for complex analysis, debugging, planning, comparison, and
+multi-step requests. Cloud providers ignore this optional capability.
+
+Ollama model selection is separate from thinking control: simple or ambiguous
+requests use configurable `OLLAMA_SIMPLE_MODEL` (default `llama3.2:3b`);
+clearly complex requests use `OLLAMA_COMPLEX_MODEL` (default `qwen3:4b`).
+The same selected model is retained for a tool-call continuation. A tool is
+executed once by the registry; a continuation failure is not replayed through
+another provider.
+
+The provider system prompt explicitly treats tools as optional capabilities.
+Knowledge questions are answered directly, tool-required requests use the
+registry, and tool-plus-knowledge requests use the tool before explaining its
+result.
+
+Application launching is a dedicated allowlisted tool. It accepts only a
+registered application name (`brave` initially), resolves only known
+executable locations, and never invokes a shell or arbitrary user path.
+
+The cloud adapter set is Gemini, OpenAI, Groq, Cerebras, OpenRouter, Mistral,
+and Cohere, followed by Ollama. `ProviderManager` uses only the configured
+deterministic order and skips providers missing required key/model settings.
+Each adapter owns its SDK-specific request and response translation,
+timeouts, capability differences, and safe error conversion. Unsupported
+provider/model tool calling is surfaced as a provider error rather than
+emulated with heuristics.
+
+The initial local capabilities are:
+
+| Tool | External Network | Local Fallback |
+| --- | --- | --- |
+| weather | Yes | Yes |
+| time | No | Yes |
+| date | No | Yes |
+| calculator | No | Yes |
+| system_info | No | Yes |
+
+These local tools are intentionally small and deterministic. They are not a
+local LLM and do not provide general natural-language understanding.
+
+The local router pipeline is:
+
+```text
+normalization
+    ↓
+rule-based intent recognition
+    ↓
+entity extraction
+    ↓
+confidence decision
+    ↓
+ToolCall
+```
+
+The local router is a permanent JARVIS subsystem. Its implementation may
+evolve from deterministic rules into a hybrid semantic/local-model system, but
+the router-to-`ToolCall` boundary remains stable. Future semantic recognizers
+or local models can implement the recognizer boundary without changing the
+orchestrator, registry, tools, or provider layer.
+
 ### Tool System
 
 Tools are explicit capabilities.
@@ -187,6 +256,11 @@ The initial TTS implementation uses the OpenAI audio API behind a TTS interface.
 13. Response layer outputs text and/or speech.
 14. Relevant state/memory is persisted.
 ```
+
+When the provider fails before returning a response, the orchestrator may
+route a recognized local intent directly to the same `ToolRegistry`. Expected
+provider failures are logged concisely at warning level; detailed tracebacks
+remain available at debug level.
 
 ## 4. Multi-Step Tasks
 

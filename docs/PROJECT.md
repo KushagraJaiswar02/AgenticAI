@@ -4,7 +4,9 @@
 
 JARVIS is a personal desktop AI assistant designed to interact with the user through text and voice, reason about requests using an LLM, retrieve relevant memory, and execute controlled actions on the user's computer and connected services.
 
-The project is initially a local Python application using a cloud LLM as its reasoning engine. Local models may be introduced later behind the same LLM abstraction.
+The project is initially a local Python application using a cloud LLM as its reasoning engine. Local models are available as an optional final fallback behind the same LLM
+abstraction. Ollama uses `llama3.2:3b` for fast/simple requests and
+`qwen3:4b` for clearly complex reasoning requests.
 
 ## 2. Core Principle
 
@@ -44,6 +46,16 @@ V0 is one release implemented through incremental internal stages. The first imp
 ### V0.2 tool milestone
 
 V0.2 adds a small, explicit tool layer to the existing provider-neutral orchestration pattern. The first concrete tool is a weather lookup. The weather tool is registered with a tool registry, validated with Pydantic, and executed only after the LLM makes a native function/tool call that the orchestrator accepts. The LLM does not directly execute tools; JARVIS controls execution and feeds the structured tool result back through the provider's native function-response flow.
+
+The local fallback path also supports deterministic routing between the two
+Ollama models. This exists because local testing showed that `qwen3:4b` has
+significant inference latency even for trivial requests, while `llama3.2:3b`
+responds rapidly. Forcing `/no_think` on Qwen is not treated as the
+performance solution.
+
+Application control is limited to an explicit allowlist. The current launcher
+supports Brave only; arbitrary shell commands and executable paths are not
+accepted.
 
 ## Locked V0 Technology Stack
 

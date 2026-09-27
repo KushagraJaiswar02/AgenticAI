@@ -206,3 +206,54 @@ V0 is one release delivered through internal stages: V0.1 core text pipeline, V0
 
 ### Reason
 Text-first vertical slices make orchestration and security deterministic while allowing the complete documented V0 capability set to be added progressively. These stages do not create separate products or change the modular-monolith architecture.
+
+---
+
+## ADR-021 — Two-Model Ollama Fallback
+
+### Decision
+
+When Ollama is selected, use `llama3.2:3b` for simple or ambiguous requests and
+`qwen3:4b` for clearly complex requests. Keep both model names and their
+timeouts configurable through environment settings.
+
+### Reason
+
+Local testing showed that Qwen's inference latency remains high for trivial
+requests even when `/no_think` changes the exposed reasoning output. A smaller
+model is therefore the fast path; Qwen remains available for deeper reasoning.
+
+---
+
+## ADR-022 — Safe Application Launching
+
+### Decision
+
+Application launching is exposed only through an allowlisted tool. The initial
+allowlist contains `brave` and maps it to known Brave executable locations.
+The tool uses `subprocess.Popen(..., shell=False)` without accepting arbitrary
+commands, arguments, or executable paths.
+
+### Reason
+
+Desktop execution is a privileged capability. An explicit mapping preserves
+extensibility while preventing shell injection and arbitrary process launch.
+
+---
+
+## ADR-023 — Explicit Multi-Provider Failover
+
+### Decision
+
+Support Gemini, OpenAI, Groq, Cerebras, OpenRouter, Mistral, Cohere, and
+Ollama behind the existing provider-neutral interface. Provider priority is
+configured only through `LLM_PROVIDER_ORDER`; providers missing a required API
+key or model are skipped before a request. Each provider owns its SDK adapter,
+timeout, response normalization, and capability differences.
+
+### Reason
+
+Independent adapters provide resilience without coupling the orchestrator to
+vendor APIs. A single attempt is made per provider before moving to the next,
+avoiding multiplied latency and preserving the existing tool-continuation
+stickiness rule.

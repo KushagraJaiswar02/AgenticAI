@@ -21,6 +21,18 @@ V0 is one release implemented through the following incremental internal stages.
 - constrained application launching
 - permission manager
 - target-specific confirmation
+- deterministic local fallback intents
+- allowlisted Brave application launching
+- native tool-call continuation without duplicate execution
+
+## V0.2/V0.3 stabilization
+
+- Gemini → OpenAI → Ollama provider failover
+- Groq, Cerebras, OpenRouter, Mistral, and Cohere adapters
+- `llama3.2:3b` for simple local requests
+- `qwen3:4b` for complex local reasoning
+- separate simple/complex Ollama timeouts
+- tool-versus-knowledge system guidance
 
 ## V0.3 — Persistence and memory
 
@@ -62,7 +74,7 @@ V0 is one release implemented through the following incremental internal stages.
 - scheduled/background tasks
 - personality and deeper personalization
 - long-running autonomous tasks
-- local LLMs
+- additional local LLMs
 - additional integrations
 
 ## Rule

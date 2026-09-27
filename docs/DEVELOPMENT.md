@@ -66,6 +66,7 @@ Tests are separated by responsibility:
 - **Provider tests** mock the Gemini and OpenAI SDKs and verify adapter normalization, native tool calls, errors, and Gemini thought-signature context preservation.
 - **Orchestrator integration tests** use the real `Orchestrator` and `ToolRegistry` with `FakeLLMProvider`. They verify deterministic tool selection, execution, result handoff, failures, and sequential interactions without Gemini, OpenAI, DNS, Wi-Fi, or external weather services.
 - **Local fallback tests** verify that only recoverable `LLMProviderError` failures invoke the deterministic `LocalIntentRouter`; non-provider failures and unrecognized intents do not use it.
+- **Local tool tests** cover deterministic time, date, calculator, and system-information tools, including calculator safety rejection and registry dispatch.
 - **Live integration tests**, when present, must be marked `integration` and are never part of the default offline suite. They may fail because of network, quota, rate-limit, availability, or provider-outage conditions.
 
 `FakeLLMProvider` exists only for deterministic application tests. It returns
@@ -85,6 +86,53 @@ python -m pytest -m integration
 
 The first test command is the normal offline suite. The second explicitly runs
 tests marked `integration`.
+
+The current local fallback capabilities are weather, time, date, calculator,
+and basic system information. They use the existing `ToolCall` and
+`ToolRegistry` contracts and do not add a local model or general language
+understanding. The router normalizes input, recognizes a supported intent,
+extracts entities, applies a deterministic confidence threshold, and only
+then constructs a `ToolCall`. Ambiguous requests return no local match.
+
+Provider requests are routed through a request-scoped provider manager. Set
+`LLM_PROVIDER` for the preferred provider and `LLM_PROVIDER_ORDER` for the
+failover chain. Missing optional cloud keys skip those providers; Ollama does
+not require a key and is the final local fallback. Configure finite
+`LLM_REQUEST_TIMEOUT`, `OLLAMA_SIMPLE_TIMEOUT`, and
+`OLLAMA_COMPLEX_TIMEOUT` values.
+
+Install Ollama separately, then prepare the default model:
+
+```powershell
+ollama pull qwen3:4b
+ollama list
+```
+
+Only Ollama receives the local task-complexity decision. The deterministic
+router sends thinking disabled for simple requests and enabled for complex
+analysis/planning/debugging requests. No cloud provider receives this
+classification behavior.
+
+The complexity decision also selects the Ollama model: simple or ambiguous
+requests use `OLLAMA_SIMPLE_MODEL` (`llama3.2:3b` by default), while clearly
+complex requests use `OLLAMA_COMPLEX_MODEL` (`qwen3:4b` by default). Separate
+`OLLAMA_SIMPLE_TIMEOUT` and `OLLAMA_COMPLEX_TIMEOUT` values prevent trivial
+requests from waiting for the long complex-task budget. `/no_think` is not a
+latency strategy.
+
+The tool registry includes an allowlisted `open_application` tool for Brave.
+Tests must patch process launch and verify that unknown names, executable
+paths, and shell input cannot reach `subprocess.Popen`.
+
+Cloud provider adapters are independently mock-tested. Their SDKs are
+constructed only when the corresponding API key and model are configured.
+Run the optional health diagnostic with `python -m app.provider_health`; it
+makes at most one tiny request per configured provider and is not part of
+normal startup or the offline test suite.
+
+The router is a permanent subsystem rather than temporary fallback code.
+Future semantic or local-model recognizers can be added behind its internal
+recognizer boundary without changing tool execution or orchestration.
 
 ## 7. Incremental V0 Stages
 

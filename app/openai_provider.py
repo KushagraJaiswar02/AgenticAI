@@ -16,7 +16,10 @@ class OpenAIProvider(LLMProvider):
     """Adapt the official OpenAI SDK to JARVIS's provider-neutral contract."""
 
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
-        self._client = client or OpenAI(api_key=settings.openai_api_key)
+        self._client = client or OpenAI(
+            api_key=settings.openai_api_key,
+            timeout=settings.openai_timeout,
+        )
         self._model = settings.openai_model
 
     def generate(
@@ -26,7 +29,9 @@ class OpenAIProvider(LLMProvider):
         *,
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
+        think: bool | None = None,
     ) -> LLMResponse:
+        del think
         if tool_result is not None and tool_call is not None:
             return self._generate_after_tool_result(tool_call, tool_result)
 
