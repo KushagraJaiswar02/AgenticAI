@@ -97,6 +97,7 @@ def create_provider_manager(
     logger: logging.Logger | None = None,
     constructors: dict[str, Callable[[Settings], LLMProvider]] | None = None,
 ) -> ProviderManager:
+    logger = logger or logging.getLogger("jarvis")
     from app.gemini_provider import GeminiProvider
     from app.ollama_provider import OllamaProvider
     from app.openai_provider import OpenAIProvider
@@ -121,22 +122,31 @@ def create_provider_manager(
         "mistral": settings.mistral_api_key and settings.mistral_model,
         "ollama": True,
     }
-    ordered_names = [settings.llm_provider] + [
-        name for name in settings.llm_provider_order if name != settings.llm_provider
-    ]
+    ordered_names = list(dict.fromkeys(settings.llm_provider_order))
     providers: list[tuple[str, LLMProvider]] = []
     for name in ordered_names:
         constructor = available.get(name)
         if constructor is None:
+            logger.info("provider=%s status=skipped reason=unknown_provider", name)
             continue
         if not configured_keys.get(name):
-            if logger:
-                logger.info("provider=%s status=skipped reason=missing_configuration", name)
+            logger.info("provider=%s status=skipped reason=missing_configuration", name)
             continue
         try:
-            providers.append((name, constructor(settings)))
-        except (LLMProviderError, InvalidProviderResponseError):
+            provider = constructor(settings)
+        except (LLMProviderError, InvalidProviderResponseError) as exc:
+            logger.warning(
+                "provider=%s status=skipped reason=construction_unavailable type=%s",
+                name,
+                exc.__class__.__name__,
+            )
             continue
+        except Exception:
+            logger.exception("provider=%s status=construction_failed", name)
+            raise
+        providers.append((name, provider))
     if not providers:
         raise LLMProviderError("No configured LLM providers are available")
+    logger.info("configured provider order=%s", list(settings.llm_provider_order))
+    logger.info("constructed providers=%s", [name for name, _ in providers])
     return ProviderManager(providers, logger=logger)

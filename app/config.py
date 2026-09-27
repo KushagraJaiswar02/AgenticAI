@@ -12,6 +12,18 @@ class ConfigurationError(RuntimeError):
     """Raised when required runtime configuration is missing or invalid."""
 
 
+SUPPORTED_PROVIDERS = (
+    "gemini",
+    "openai",
+    "groq",
+    "cerebras",
+    "openrouter",
+    "mistral",
+    "cohere",
+    "ollama",
+)
+
+
 @dataclass(frozen=True)
 class Settings:
     llm_provider: str = "gemini"
@@ -59,8 +71,10 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
         "gemini,openai,groq,cerebras,openrouter,mistral,cohere,ollama",
     )
     provider_order = tuple(item.strip().lower() for item in order_value.split(",") if item.strip())
-    if provider not in {"gemini", "openai", "ollama"}:
-        raise ConfigurationError("LLM_PROVIDER must be 'gemini', 'openai', or 'ollama'")
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ConfigurationError(
+            f"LLM_PROVIDER must be one of: {', '.join(SUPPORTED_PROVIDERS)}"
+        )
     if not provider_order:
         raise ConfigurationError("LLM_PROVIDER_ORDER must contain at least one provider")
 

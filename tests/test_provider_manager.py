@@ -57,3 +57,64 @@ def test_factory_skips_missing_cloud_keys_and_keeps_ollama() -> None:
         constructors={"ollama": lambda _: StubProvider(LLMResponse(text="local"))},
     )
     assert manager.generate("hello").text == "local"
+
+
+def test_factory_includes_every_configured_provider_in_declared_order() -> None:
+    order = ("gemini", "openai", "groq", "cerebras", "openrouter", "mistral", "cohere", "ollama")
+    settings = Settings(
+        llm_provider="gemini",
+        llm_provider_order=order,
+        gemini_api_key="gemini-key",
+        gemini_model="gemini-model",
+        openai_api_key="openai-key",
+        openai_model="openai-model",
+        groq_api_key=None,
+        groq_model="groq-model",
+        cerebras_api_key="cerebras-key",
+        cerebras_model="cerebras-model",
+        openrouter_api_key="openrouter-key",
+        openrouter_model="openrouter-model",
+        mistral_api_key="mistral-key",
+        mistral_model="mistral-model",
+        cohere_api_key="cohere-key",
+        cohere_model="cohere-model",
+    )
+    constructors = {
+        name: (lambda provider_name: lambda _: StubProvider(
+            LLMResponse(text=provider_name)
+        ))(name)
+        for name in order
+    }
+
+    manager = create_provider_manager(settings, constructors=constructors)
+
+    assert [name for name, _ in manager._providers] == [
+        "gemini",
+        "openai",
+        "cerebras",
+        "openrouter",
+        "mistral",
+        "cohere",
+        "ollama",
+    ]
+
+
+def test_configured_provider_construction_failure_is_not_silent() -> None:
+    settings = Settings(
+        llm_provider="cerebras",
+        llm_provider_order=("cerebras", "ollama"),
+        cerebras_api_key="key",
+        cerebras_model="model",
+    )
+
+    def broken_constructor(_):
+        raise RuntimeError("constructor failed")
+
+    with pytest.raises(RuntimeError, match="constructor failed"):
+        create_provider_manager(
+            settings,
+            constructors={
+                "cerebras": broken_constructor,
+                "ollama": lambda _: StubProvider(LLMResponse(text="local")),
+            },
+        )

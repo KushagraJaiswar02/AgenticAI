@@ -52,3 +52,12 @@ def test_ollama_models_and_timeouts_are_configurable(monkeypatch: pytest.MonkeyP
     assert settings.ollama_complex_model == "deep-model"
     assert settings.ollama_simple_timeout == 7
     assert settings.ollama_complex_timeout == 70
+
+
+@pytest.mark.parametrize("provider", ["groq", "cerebras", "openrouter", "mistral", "cohere"])
+def test_all_cloud_providers_are_valid_preferred_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", provider)
+    assert load_settings(dotenv_path=str(Path("missing.env"))).llm_provider == provider
