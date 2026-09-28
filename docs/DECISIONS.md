@@ -257,3 +257,15 @@ Independent adapters provide resilience without coupling the orchestrator to
 vendor APIs. A single attempt is made per provider before moving to the next,
 avoiding multiplied latency and preserving the existing tool-continuation
 stickiness rule.
+
+---
+
+## ADR-024 — Centralized Deterministic Tool Policy
+
+### Decision
+
+All tool calls pass through `PolicyEngine` and the `ToolRegistry` execution boundary. Risk metadata is application-owned; confirmation tokens are exact-action, expiring, and single-use. Forbidden capabilities have no approval path.
+
+### Reason
+
+LLM output is untrusted input. A single local policy boundary prevents provider and local-router paths from bypassing safety checks while keeping individual tools focused on validation and execution.

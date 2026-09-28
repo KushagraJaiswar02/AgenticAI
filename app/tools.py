@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import operator
 import platform
 import shutil
 import subprocess
+import time
+import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Iterable
 
@@ -18,6 +21,15 @@ from pydantic import BaseModel, ValidationError
 
 from app.errors import ApplicationError
 from app.llm import ToolDefinition
+from app.audit import AuditLogger
+from app.confirmation import ConfirmationManager, ConfirmationRequest
+from app.policy import (
+    ConfirmationRequiredError,
+    PolicyAction,
+    PolicyDeniedError,
+    PolicyEngine,
+    RiskLevel,
+)
 
 
 class ToolError(ApplicationError):
@@ -43,6 +55,15 @@ class ToolExecutionResult:
     success: bool
     data: dict[str, Any] | None = None
     error: str | None = None
+    tool_name: str | None = None
+
+    @property
+    def result(self) -> dict[str, Any] | None:
+        """Canonical result payload while preserving the existing data API."""
+        return self.data
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"success": self.success, "tool_name": self.tool_name, "result": self.data, "error": self.error}
 
 
 class Tool(ABC):
@@ -51,6 +72,17 @@ class Tool(ABC):
     name: str = ""
     description: str = ""
     input_model: type[BaseModel] | None = None
+    risk_level: RiskLevel = RiskLevel.SAFE
+
+    def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return dict(arguments)
+
+    def preflight(self, arguments: dict[str, Any]) -> None:
+        del arguments
+
+    def confirmation_prompt(self, arguments: dict[str, Any]) -> str | None:
+        del arguments
+        return None
 
     @abstractmethod
     def execute(self, arguments: BaseModel | dict[str, Any]) -> ToolExecutionResult:
@@ -71,8 +103,12 @@ class Tool(ABC):
 class ToolRegistry:
     """Maintain a small set of explicitly registered tools."""
 
-    def __init__(self, tools: Iterable[Tool] | None = None) -> None:
+    def __init__(self, tools: Iterable[Tool] | None = None, *, policy_engine: PolicyEngine | None = None, confirmation_manager: ConfirmationManager | None = None, audit_logger: AuditLogger | None = None) -> None:
         self._tools: dict[str, Tool] = {}
+        self.policy_engine = policy_engine or PolicyEngine()
+        self.confirmation_manager = confirmation_manager or ConfirmationManager()
+        self.audit_logger = audit_logger or AuditLogger()
+        self._logger = logging.getLogger("jarvis.tools")
         if tools:
             for tool in tools:
                 self.register(tool)
@@ -110,23 +146,65 @@ class ToolRegistry:
                     },
                     "required": getattr(tool.input_model, "model_json_schema", lambda: {"required": []})().get("required", []),
                 },
+                risk_level=tool.risk_level.value,
             )
             for tool in self._tools.values()
         ]
 
-    def execute(self, name: str, arguments: dict[str, Any]) -> ToolExecutionResult:
-        """Execute a registered tool by name."""
+    def execute(self, name: str, arguments: dict[str, Any], *, request_id: str | None = None, confirmation_response: str | None = None, confirmation_request: ConfirmationRequest | None = None, provider: str | None = None) -> ToolExecutionResult:
+        """Execute through the sole policy-enforced registry path."""
         tool = self.get(name)
         if tool is None:
             raise UnknownToolError(f"Tool '{name}' is not registered")
+        original_arguments = dict(arguments)
+        if name == "create_file":
+            self._logger.debug("LLM tool arguments: %s", self._safe_filesystem_arguments(original_arguments))
+        arguments = tool.normalize_arguments(arguments)
+        if name == "create_file":
+            self._logger.debug("Normalized create_file arguments: %s", self._safe_filesystem_arguments(arguments))
+            self._logger.debug("Resolved filesystem target: %s", arguments.get("path"))
+        tool.preflight(arguments)
+        action_id = request_id or (confirmation_request.action_id if confirmation_request else str(uuid.uuid4()))
+        started = time.perf_counter()
+        decision = self.policy_engine.evaluate(tool, arguments)
+        if name == "create_file":
+            self._logger.debug("Policy-checked filesystem target: %s", arguments.get("path"))
+        confirmation_required = decision.action is PolicyAction.REQUIRE_CONFIRMATION
+        confirmation_result: str | None = None
+        request = None
+        if decision.action is PolicyAction.DENY:
+            self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=False, confirmation_result=None, execution_result="denied", provider=provider, duration=time.perf_counter() - started)
+            raise PolicyDeniedError(decision.reason)
+        if confirmation_required:
+            request = confirmation_request or self.confirmation_manager.create_request(name, arguments, action_id, decision.risk_level, strong=decision.risk_level is RiskLevel.HIGH, prompt=tool.confirmation_prompt(arguments))
+            if confirmation_response is None:
+                self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=True, confirmation_result="pending", execution_result="not_executed", provider=provider, duration=time.perf_counter() - started)
+                raise ConfirmationRequiredError(request)
+            approved = self.confirmation_manager.approve(request, confirmation_response, tool_name=name, arguments=arguments, action_id=action_id, risk_level=decision.risk_level)
+            confirmation_result = "approved" if approved else "rejected"
+            if not approved:
+                self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=True, confirmation_result=confirmation_result, execution_result="not_executed", provider=provider, duration=time.perf_counter() - started)
+                raise PolicyDeniedError("Confirmation was rejected, expired, or did not match this exact action")
+        execution_state = "failed"
         try:
-            return tool.call(arguments)
+            result = tool.call(arguments)
+            if not isinstance(result, ToolExecutionResult):
+                raise ToolExecutionError(f"Tool '{name}' returned an invalid result structure")
+            result = replace(result, tool_name=name)
+            execution_state = "completed" if result.success else "failed"
+            return result
         except ToolExecutionError:
             raise
         except ApplicationError:
             raise
         except Exception as exc:  # pragma: no cover - defensive fallback
             raise ToolExecutionError(f"Tool '{name}' failed unexpectedly") from exc
+        finally:
+            self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=confirmation_required, confirmation_result=confirmation_result, execution_result=execution_state, provider=provider, duration=time.perf_counter() - started)
+
+    @staticmethod
+    def _safe_filesystem_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in arguments.items() if key != "content"}
 
 
 class WeatherInput(BaseModel):
@@ -141,6 +219,7 @@ class WeatherTool(Tool):
     name = "weather"
     description = "Get the current weather for a specific location."
     input_model = WeatherInput
+    risk_level = RiskLevel.SAFE
 
     def execute(self, arguments: WeatherInput | dict[str, Any]) -> ToolExecutionResult:
         location = arguments.location.strip() if isinstance(arguments, WeatherInput) else str(arguments["location"]).strip()
@@ -209,6 +288,7 @@ class TimeTool(Tool):
     name = "time"
     description = "Get the current local time."
     input_model = EmptyInput
+    risk_level = RiskLevel.SAFE
 
     def execute(self, arguments: EmptyInput | dict[str, Any]) -> ToolExecutionResult:
         try:
@@ -226,6 +306,7 @@ class DateTool(Tool):
     name = "date"
     description = "Get today's local date."
     input_model = EmptyInput
+    risk_level = RiskLevel.SAFE
 
     def execute(self, arguments: EmptyInput | dict[str, Any]) -> ToolExecutionResult:
         try:
@@ -250,6 +331,7 @@ class CalculatorTool(Tool):
     name = "calculator"
     description = "Evaluate a basic arithmetic expression safely."
     input_model = CalculatorInput
+    risk_level = RiskLevel.SAFE
 
     _BINARY_OPERATORS = {
         ast.Add: operator.add,
@@ -306,6 +388,7 @@ class SystemInfoTool(Tool):
     name = "system_info"
     description = "Get basic non-sensitive operating system and runtime information."
     input_model = EmptyInput
+    risk_level = RiskLevel.SAFE
 
     def execute(self, arguments: EmptyInput | dict[str, Any]) -> ToolExecutionResult:
         try:
@@ -334,6 +417,7 @@ class OpenApplicationTool(Tool):
     name = "open_application"
     description = "Open an allowlisted desktop application by name."
     input_model = OpenApplicationInput
+    risk_level = RiskLevel.LOW
     _ALLOWLIST = {"brave"}
 
     def execute(

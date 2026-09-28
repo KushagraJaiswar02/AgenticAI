@@ -8,6 +8,18 @@ The application runs locally and consists of independent modules with clear inte
 
 The locked runtime is Python 3.12 on Windows. SQLite is accessed through SQLAlchemy. Pydantic defines and validates application, tool, and provider-boundary schemas. Configuration is loaded with python-dotenv, HTTP integrations use httpx, and tests use pytest.
 
+### V0.4 tool safety flow
+
+```text
+ToolCall -> PolicyEngine -> ConfirmationManager (when required) -> ToolRegistry -> Tool -> ToolResult
+```
+
+The registry is the authoritative execution boundary for both cloud-provider and local-router calls. It validates tool arguments, evaluates deterministic risk metadata, records audit data, and only then invokes `Tool.call`. Future multi-step execution must evaluate each step independently.
+
+Filesystem path interpretation is separate from authorization: `PathResolver` maps workspace, current-directory, and exact recent-file references to concrete paths; `FilesystemBoundary` then canonicalizes and authorizes those paths. Tool results update `FilesystemContext`, which tracks recent files and directories for the current session.
+
+`ConversationState` is owned by the `Orchestrator` for the lifetime of a CLI session. It contains conversation history, the shared `FilesystemContext`, and any pending confirmation. Each turn consults that same state before the provider tool call reaches the registry, so references such as `it` are resolved deterministically without giving the model authority over filesystem access.
+
 V0 is one release delivered through incremental internal stages. The first stage is a text-only vertical slice. Voice, browser control, semantic memory, filesystem automation, and bounded multi-step execution are added progressively without changing the modular-monolith boundary.
 
 ```text

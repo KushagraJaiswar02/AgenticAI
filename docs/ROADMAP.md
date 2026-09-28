@@ -4,6 +4,15 @@
 
 V0 is one release implemented through the following incremental internal stages. These are not separate products.
 
+## V0.4 safety milestone
+
+- deterministic risk metadata and policy engine
+- exact, expiring confirmation tokens
+- canonical filesystem allowlist boundary
+- bounded filesystem tools
+- structured sanitized tool audit records
+- arbitrary shell execution remains forbidden
+
 ## V0.1 — Core text pipeline
 
 - Python 3.12 Windows runtime

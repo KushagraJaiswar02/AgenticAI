@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -60,6 +61,9 @@ class Settings:
     ollama_complex_timeout: float = 120.0
     ollama_request_timeout: float = 120.0
     database_url: str = "sqlite:///jarvis.db"
+    filesystem_allowed_roots: tuple[str, ...] = ()
+    jarvis_workspace: str = ""
+    project_root: str = ""
 
 
 def load_settings(*, dotenv_path: str | None = None) -> Settings:
@@ -110,6 +114,13 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
     if any(value <= 0 for value in (request_timeout, ollama_simple_timeout, ollama_complex_timeout, *cloud_timeouts.values())):
         raise ConfigurationError("Provider timeouts must be positive")
 
+    project_value = os.getenv("JARVIS_PROJECT_ROOT", "").strip() or os.getcwd()
+    project_root = str(Path(project_value).expanduser().resolve())
+    workspace_value = os.getenv("JARVIS_WORKSPACE", "").strip() or str(Path(project_root).parent)
+    workspace_root = str(Path(workspace_value).expanduser().resolve())
+    allowed_value = os.getenv("JARVIS_ALLOWED_ROOTS", "").strip() or workspace_root
+    allowed_roots = tuple(item.strip() for item in allowed_value.split(os.pathsep) if item.strip())
+
     return Settings(
         llm_provider=provider,
         llm_provider_order=provider_order,
@@ -141,4 +152,7 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
         ollama_simple_timeout=ollama_simple_timeout,
         ollama_complex_timeout=ollama_complex_timeout,
         ollama_request_timeout=ollama_complex_timeout,
+        filesystem_allowed_roots=allowed_roots,
+        jarvis_workspace=workspace_root,
+        project_root=project_root,
     )

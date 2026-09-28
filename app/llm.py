@@ -16,6 +16,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]
+    risk_level: str = "SAFE"
 
 
 @dataclass(frozen=True)

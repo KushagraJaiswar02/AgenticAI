@@ -147,6 +147,26 @@ def test_gemini_pending_tool_context_is_not_reused_for_unrelated_request() -> No
         )
 
 
+def test_gemini_preserves_multiple_sequential_function_calls() -> None:
+    def response(name, args):
+        call = SimpleNamespace(name=name, args=args)
+        content = SimpleNamespace(role="model", parts=[SimpleNamespace(function_call=call)])
+        return SimpleNamespace(text=None, candidates=[SimpleNamespace(content=content)])
+
+    models = FakeModels(results=[
+        response("search_files", {"root": "workspace", "pattern": "config.json"}),
+        response("read_file", {"path": "config.json"}),
+        SimpleNamespace(text="The configuration is valid."),
+    ])
+    llm = provider(models)
+    first = llm.generate("find config", tools=[ToolDefinition(name="search_files", description="Search", parameters={})])
+    second = llm.generate("find config", tool_call=first.tool_call, tool_result={"matches": ["config.json"]})
+    final = llm.generate("find config", tool_call=second.tool_call, tool_result={"content": "{}"})
+    assert first.tool_call.name == "search_files"
+    assert second.tool_call.name == "read_file"
+    assert final.text == "The configuration is valid."
+
+
 def test_gemini_failure_is_structured() -> None:
     with pytest.raises(LLMProviderError, match="Gemini request failed"):
         provider(FakeModels(error=RuntimeError("quota exhausted"))).generate("hello")

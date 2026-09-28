@@ -26,6 +26,7 @@ class GeminiProvider(LLMProvider):
         )
         self._model = settings.gemini_model
         self._pending_tool_context: Any | None = None
+        self._pending_tool_history: list[Any] = []
 
     def generate(
         self,
@@ -41,6 +42,7 @@ class GeminiProvider(LLMProvider):
             return self._generate_after_tool_result(prompt, tool_call, tool_result)
 
         self._pending_tool_context = None
+        self._pending_tool_history = []
         tool_declarations = self._to_tool_declarations(tools or [])
         config = None
         if tool_declarations:
@@ -54,6 +56,7 @@ class GeminiProvider(LLMProvider):
             )
         except Exception as exc:
             self._pending_tool_context = None
+            self._pending_tool_history = []
             raise LLMProviderError("Gemini request failed") from exc
 
         call = self._extract_tool_call(response)
@@ -62,6 +65,7 @@ class GeminiProvider(LLMProvider):
             if model_content is None:
                 raise InvalidProviderResponseError("Gemini returned a malformed function call")
             self._pending_tool_context = model_content
+            self._pending_tool_history = [model_content]
             return LLMResponse(text="", tool_call=call)
 
         text = getattr(response, "text", None)
@@ -86,25 +90,35 @@ class GeminiProvider(LLMProvider):
                 name=tool_call.name,
                 response={"result": tool_result},
             )
-            contents = [
-                types.Content(role="user", parts=[types.Part.from_text(text=prompt)]),
-                model_content,
-                types.Content(role="user", parts=[function_response]),
-            ]
+            contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+            contents.extend(self._pending_tool_history or [model_content])
+            contents.append(types.Content(role="user", parts=[function_response]))
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
             )
+            call = self._extract_tool_call(response)
+            if call is not None:
+                model_content = self._get_model_content(response)
+                if model_content is None:
+                    raise InvalidProviderResponseError("Gemini returned a malformed function call")
+                self._pending_tool_context = model_content
+                self._pending_tool_history = [*(self._pending_tool_history or [model_content]), contents[-1], model_content]
+                return LLMResponse(text="", tool_call=call)
             text = getattr(response, "text", None)
             if not isinstance(text, str) or not text.strip():
                 raise InvalidProviderResponseError("Gemini returned an invalid response")
+            self._pending_tool_context = None
+            self._pending_tool_history = []
             return LLMResponse(text=text.strip())
         except InvalidProviderResponseError:
+            self._pending_tool_context = None
+            self._pending_tool_history = []
             raise
         except Exception as exc:
-            raise LLMProviderError("Gemini request failed") from exc
-        finally:
             self._pending_tool_context = None
+            self._pending_tool_history = []
+            raise LLMProviderError("Gemini request failed") from exc
 
     @staticmethod
     def _get_model_content(response: Any) -> Any | None:

@@ -39,6 +39,16 @@ def test_openai_configuration_remains_available(monkeypatch: pytest.MonkeyPatch)
     assert settings.openai_model == "test-model"
 
 
+def test_workspace_configuration_loads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("JARVIS_WORKSPACE", str(workspace))
+    monkeypatch.setenv("JARVIS_ALLOWED_ROOTS", str(tmp_path))
+    settings = load_settings(dotenv_path=str(Path("missing.env")))
+    assert settings.jarvis_workspace == str(workspace)
+    assert settings.filesystem_allowed_roots == (str(tmp_path),)
+
+
 def test_ollama_models_and_timeouts_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("OLLAMA_SIMPLE_MODEL", "fast-model")

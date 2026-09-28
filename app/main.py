@@ -21,6 +21,10 @@ from app.tools import (
     ToolRegistry,
     WeatherTool,
 )
+from app.filesystem_security import FilesystemBoundary
+from app.filesystem_tools import create_filesystem_tools
+from app.filesystem_context import FilesystemContext
+from app.session import ConversationState
 
 
 def main() -> int:
@@ -36,6 +40,8 @@ def main() -> int:
         logger.error("Application startup failed: %s", exc)
         return 1
 
+    boundary = FilesystemBoundary(list(settings.filesystem_allowed_roots))
+    filesystem_context = FilesystemContext.create(settings.jarvis_workspace, boundary, settings.project_root)
     tool_registry = ToolRegistry(
         [
             WeatherTool(),
@@ -44,9 +50,11 @@ def main() -> int:
             CalculatorTool(),
             SystemInfoTool(),
             OpenApplicationTool(),
+            *create_filesystem_tools(boundary, filesystem_context),
         ]
     )
-    orchestrator = Orchestrator(llm_provider, tool_registry=tool_registry, logger=logger)
+    state = ConversationState(filesystem_context=filesystem_context)
+    orchestrator = Orchestrator(llm_provider, tool_registry=tool_registry, logger=logger, confirmation_callback=lambda prompt: input(f"JARVIS: {prompt}\n> "), state=state)
 
     print("JARVIS V0.1. Type 'exit' or 'quit' to stop.")
     while True:

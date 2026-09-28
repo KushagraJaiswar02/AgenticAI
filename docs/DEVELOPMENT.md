@@ -138,6 +138,8 @@ recognizer boundary without changing tool execution or orchestration.
 
 V0 is one release with these internal stages:
 
+V0.4 safety configuration uses `JARVIS_ALLOWED_ROOTS`, a platform-separated list of canonical filesystem roots, and `JARVIS_WORKSPACE` for the default project context. If omitted, the current application directory is the only allowed root and workspace. The configured workspace must already exist and be inside an allowed root. Keep both settings narrow and project-specific.
+
 1. **V0.1 — Core text pipeline:** Python 3.12 runtime, configuration, logging, provider-neutral LLM interface with OpenAI adapter, text input/output, and basic orchestrator.
 2. **V0.2 — Tool system and permissions:** Pydantic tool schemas, registry, structured results, permission manager, target-specific confirmation, and constrained system/utility tools.
 3. **V0.3 — Persistence and memory:** SQLAlchemy + SQLite migrations and repositories, conversation/task/tool persistence, explicit structured memory, and ChromaDB through replaceable memory and embedding interfaces.

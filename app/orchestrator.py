@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from collections.abc import Callable
 
 from app.errors import ApplicationError, LLMProviderError, UnexpectedApplicationError
 from app.input import normalize_input
 from app.llm import LLMProvider, ToolCall
 from app.local_router import LocalIntentRouter
 from app.tools import ToolExecutionResult, ToolRegistry
+from app.policy import ConfirmationRequiredError, PolicyDeniedError
+from app.session import ConversationState, PendingConfirmation
+from app.filesystem_context import AmbiguousFilesystemReferenceError, MissingFilesystemReferenceError
 
 
 class Orchestrator:
@@ -20,16 +25,23 @@ class Orchestrator:
         tool_registry: ToolRegistry | None = None,
         logger: logging.Logger | None = None,
         local_router: LocalIntentRouter | None = None,
+        confirmation_callback: Callable[[str], str] | None = None,
+        state: ConversationState | None = None,
     ) -> None:
         self._llm = llm
         self._tool_registry = tool_registry or ToolRegistry()
         self._logger = logger or logging.getLogger("jarvis")
         self._local_router = local_router or LocalIntentRouter()
+        self._confirmation_callback = confirmation_callback
+        self._state = state or ConversationState(filesystem_context=self._filesystem_context_from_registry())
 
     def process(self, user_message: str) -> str:
         normalized = normalize_input(user_message)
         if not normalized:
             raise ApplicationError("Message must not be empty")
+        if self._state.pending_confirmation is not None and normalized.strip().lower() in {"y", "yes", "proceed", "no", "n"}:
+            return self._resolve_pending_confirmation(normalized)
+        request_id = str(uuid.uuid4())
         try:
             try:
                 response = self._llm.generate(normalized, tools=self._tool_registry.definitions())
@@ -47,34 +59,90 @@ class Orchestrator:
                     exc,
                 )
                 self._logger.debug("LLM provider failure details", exc_info=True)
-                return self._execute_local_fallback(fallback_call)
+                return self._record_response(normalized, self._execute_local_fallback(fallback_call, request_id=request_id))
 
             if response.tool_call is None:
-                return response.text
+                return self._record_response(normalized, response.text)
 
-            tool_call = response.tool_call
-            tool_result = self._tool_registry.execute(tool_call.name, tool_call.arguments)
-            if not tool_result.success:
-                return self._tool_failure_message(tool_call.name, tool_result.error)
-
-            follow_up = self._llm.generate(
-                normalized,
-                tools=self._tool_registry.definitions(),
-                tool_call=tool_call,
-                tool_result=tool_result.data or {},
-            )
-            return follow_up.text.strip() or self._tool_success_summary(tool_result)
+            response = self._continue_tool_calls(response, normalized, request_id)
+            return self._record_response(normalized, response)
         except ApplicationError:
             raise
         except Exception as exc:
             self._logger.exception("Unexpected orchestration failure")
             raise UnexpectedApplicationError("Unable to process the request") from exc
 
-    def _execute_local_fallback(self, tool_call: ToolCall) -> str:
-        tool_result = self._tool_registry.execute(tool_call.name, tool_call.arguments)
+    def _filesystem_context_from_registry(self):
+        for name in self._tool_registry.list():
+            tool = self._tool_registry.get(name)
+            context = getattr(tool, "context", None)
+            if context is not None:
+                return context
+        return None
+
+    def _continue_tool_calls(self, response, prompt: str, request_id: str) -> str:
+        last_result: ToolExecutionResult | None = None
+        for _ in range(8):
+            if response.tool_call is None:
+                text = response.text.strip()
+                return text or (self._tool_success_summary(last_result) if last_result else "I completed the request.")
+            tool_call = self._state.resolve_filesystem_intent(response.tool_call, prompt)
+            tool_result = self._execute_with_confirmation(tool_call.name, tool_call.arguments, request_id=request_id)
+            if not tool_result.success:
+                return self._tool_failure_message(tool_call.name, tool_result.error)
+            last_result = tool_result
+            response = self._llm.generate(
+                prompt,
+                tools=self._tool_registry.definitions(),
+                tool_call=tool_call,
+                tool_result=tool_result.data or {},
+            )
+        return "I stopped after reaching the tool-step limit for this request."
+
+    def _record_response(self, user_message: str, response: str) -> str:
+        self._state.record_turn(user_message, response)
+        return response
+
+    def _resolve_pending_confirmation(self, response: str) -> str:
+        pending = self._state.pending_confirmation
+        self._state.pending_confirmation = None
+        if pending is None:
+            return "There is no pending confirmation."
+        if response.strip().lower() in {"no", "n"}:
+            return "I did not execute the action."
+        result = self._tool_registry.execute(
+            pending.tool_name,
+            pending.arguments,
+            request_id=pending.request.action_id,
+            confirmation_request=pending.request,
+            confirmation_response=response,
+            provider=type(self._llm).__name__,
+        )
+        if not result.success:
+            return self._tool_failure_message(pending.tool_name, result.error)
+        message = self._tool_success_summary(result)
+        self._state.record_turn(response, message)
+        return message
+
+    def _execute_local_fallback(self, tool_call: ToolCall, *, request_id: str) -> str:
+        tool_result = self._execute_with_confirmation(tool_call.name, tool_call.arguments, request_id=request_id)
         if not tool_result.success:
             return self._tool_failure_message(tool_call.name, tool_result.error)
         return self._tool_success_summary(tool_result)
+
+    def _execute_with_confirmation(self, name: str, arguments: dict, *, request_id: str) -> ToolExecutionResult:
+        try:
+            return self._tool_registry.execute(name, arguments, request_id=request_id, provider=type(self._llm).__name__)
+        except (AmbiguousFilesystemReferenceError, MissingFilesystemReferenceError) as exc:
+            return ToolExecutionResult(success=False, error=str(exc))
+        except ConfirmationRequiredError as exc:
+            if self._confirmation_callback is None:
+                self._state.pending_confirmation = PendingConfirmation(name, arguments, exc.request)
+                return ToolExecutionResult(success=False, error=exc.request.prompt)
+            response = self._confirmation_callback(exc.request.prompt)
+            return self._tool_registry.execute(name, arguments, request_id=request_id, confirmation_response=response, confirmation_request=exc.request, provider=type(self._llm).__name__)
+        except PolicyDeniedError:
+            raise
 
     def _tool_failure_message(self, tool_name: str, error: str | None) -> str:
         if error:
