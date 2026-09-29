@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from google import genai
@@ -40,7 +42,7 @@ class GeminiProvider(LLMProvider):
     ) -> LLMResponse:
         del think
         if tool_result is not None and tool_call is not None:
-            return self._generate_after_tool_result(prompt, tool_call, tool_result)
+            return self._generate_after_tool_result(prompt, tool_call, tool_result, tools)
 
         self._pending_tool_context = None
         self._pending_tool_history = []
@@ -67,11 +69,17 @@ class GeminiProvider(LLMProvider):
             self._pending_tool_history = []
             raise LLMProviderError("Gemini request failed") from exc
 
-        call = self._extract_tool_call(response)
+        call = self._extract_tool_call(response, tools)
         if call is not None:
             model_content = self._get_model_content(response)
             if model_content is None:
-                raise InvalidProviderResponseError("Gemini returned a malformed function call")
+                textual = getattr(response, "text", None)
+                if not isinstance(textual, str):
+                    raise InvalidProviderResponseError("Gemini returned a malformed function call")
+                model_content = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text=textual.strip())],
+                )
             self._pending_tool_context = model_content
             self._pending_tool_history = [model_content]
             return LLMResponse(text="", tool_call=call)
@@ -88,6 +96,7 @@ class GeminiProvider(LLMProvider):
         prompt: str,
         tool_call: ToolCall,
         tool_result: dict[str, Any],
+        tools: list[ToolDefinition] | None = None,
     ) -> LLMResponse:
         try:
             model_content = self._pending_tool_context
@@ -105,7 +114,7 @@ class GeminiProvider(LLMProvider):
                 model=self._model,
                 contents=contents,
             )
-            call = self._extract_tool_call(response)
+            call = self._extract_tool_call(response, tools)
             if call is not None:
                 model_content = self._get_model_content(response)
                 if model_content is None:
@@ -135,28 +144,46 @@ class GeminiProvider(LLMProvider):
             return None
         return getattr(candidates[0], "content", None)
 
-    def _extract_tool_call(self, response: Any) -> ToolCall | None:
+    def _extract_tool_call(self, response: Any, tools: list[ToolDefinition] | None = None) -> ToolCall | None:
         try:
             candidates = getattr(response, "candidates", None) or []
-            if not candidates:
-                return None
-            parts = getattr(candidates[0], "content", None)
-            if parts is None:
-                return None
-            function_calls = getattr(parts, "parts", None) or []
-            for part in function_calls:
-                call = getattr(part, "function_call", None)
-                if call is not None:
-                    name = getattr(call, "name", None)
-                    if not isinstance(name, str) or not name.strip():
-                        raise InvalidProviderResponseError("Gemini returned a malformed function call")
-                    args = getattr(call, "args", None) or {}
-                    if not isinstance(args, dict):
-                        raise InvalidProviderResponseError("Gemini returned a malformed function call")
-                    return ToolCall(name=name, arguments=args)
+            if candidates:
+                parts = getattr(candidates[0], "content", None)
+                function_calls = getattr(parts, "parts", None) or [] if parts is not None else []
+                for part in function_calls:
+                    call = getattr(part, "function_call", None)
+                    if call is not None:
+                        name = getattr(call, "name", None)
+                        if not isinstance(name, str) or not name.strip():
+                            raise InvalidProviderResponseError("Gemini returned a malformed function call")
+                        args = getattr(call, "args", None) or {}
+                        if not isinstance(args, dict):
+                            raise InvalidProviderResponseError("Gemini returned a malformed function call")
+                        return ToolCall(name=name, arguments=args)
         except Exception as exc:
             raise InvalidProviderResponseError("Gemini returned a malformed function call") from exc
-        return None
+        text = getattr(response, "text", None)
+        if not isinstance(text, str):
+            return None
+        return self._extract_textual_tool_call(text, tools)
+
+    @staticmethod
+    def _extract_textual_tool_call(text: str, tools: list[ToolDefinition] | None) -> ToolCall | None:
+        """Normalize Gemini's observed textual tool-call fallback, never arbitrary prose."""
+        match = re.fullmatch(r"TOOL_CALL\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)", text.strip(), re.DOTALL)
+        if match is None:
+            return None
+        name, raw_arguments = match.groups()
+        allowed_names = {tool.name for tool in tools or []}
+        if name not in allowed_names:
+            return None
+        try:
+            arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError as exc:
+            raise InvalidProviderResponseError("Gemini returned malformed textual tool-call JSON") from exc
+        if not isinstance(arguments, dict):
+            raise InvalidProviderResponseError("Gemini returned non-object textual tool-call arguments")
+        return ToolCall(name=name, arguments=arguments)
 
     @staticmethod
     def _to_tool_declarations(tools: list[ToolDefinition]) -> list[Any]:

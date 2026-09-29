@@ -77,6 +77,82 @@ def test_gemini_native_function_call_is_normalized() -> None:
     assert llm._pending_tool_context is model_content
 
 
+def test_gemini_textual_tool_call_is_normalized() -> None:
+    models = FakeModels(SimpleNamespace(text='TOOL_CALL read_file {"path":"quant.txt"}'))
+    result = provider(models).generate(
+        "read that file",
+        tools=[ToolDefinition("read_file", "Read a file", {"type": "object"})],
+    )
+
+    assert result.tool_call == ToolCall(name="read_file", arguments={"path": "quant.txt"})
+    assert result.text == ""
+
+
+def test_gemini_textual_tool_call_supports_multiple_arguments() -> None:
+    models = FakeModels(SimpleNamespace(text='TOOL_CALL write_file {"path":"quant.txt","content":"hello"}'))
+    result = provider(models).generate(
+        "write the file",
+        tools=[ToolDefinition("write_file", "Write a file", {"type": "object"})],
+    )
+
+    assert result.tool_call == ToolCall(name="write_file", arguments={"path": "quant.txt", "content": "hello"})
+
+
+def test_gemini_textual_tool_call_uses_existing_continuation_path() -> None:
+    models = FakeModels(results=[
+        SimpleNamespace(text='TOOL_CALL read_file {"path":"quant.txt"}'),
+        SimpleNamespace(text="quant"),
+    ])
+    llm = provider(models)
+    tools = [ToolDefinition("read_file", "Read a file", {"type": "object"})]
+
+    initial = llm.generate("read that file", tools=tools)
+    final = llm.generate(
+        "read that file",
+        tools=tools,
+        tool_call=initial.tool_call,
+        tool_result={"path": "quant.txt", "content": "quant"},
+    )
+
+    assert initial.tool_call == ToolCall(name="read_file", arguments={"path": "quant.txt"})
+    assert final.text == "quant"
+    assert len(models.calls) == 2
+
+
+def test_gemini_textual_unknown_tool_is_safe_text() -> None:
+    text = 'TOOL_CALL destroy_everything {"x":1}'
+    result = provider(FakeModels(SimpleNamespace(text=text))).generate(
+        "hello",
+        tools=[ToolDefinition("read_file", "Read a file", {"type": "object"})],
+    )
+
+    assert result.tool_call is None
+    assert result.text == text
+
+
+@pytest.mark.parametrize("text", [
+    "TOOL_CALL read_file {bad json}",
+    'TOOL_CALL read_file ["quant.txt"]',
+])
+def test_gemini_textual_tool_call_rejects_invalid_arguments(text: str) -> None:
+    with pytest.raises(InvalidProviderResponseError):
+        provider(FakeModels(SimpleNamespace(text=text))).generate(
+            "read that file",
+            tools=[ToolDefinition("read_file", "Read a file", {"type": "object"})],
+        )
+
+
+def test_gemini_prose_containing_tool_call_is_not_parsed() -> None:
+    text = 'Here is an example of TOOL_CALL read_file {"path":"quant.txt"}'
+    result = provider(FakeModels(SimpleNamespace(text=text))).generate(
+        "explain tool calls",
+        tools=[ToolDefinition("read_file", "Read a file", {"type": "object"})],
+    )
+
+    assert result.tool_call is None
+    assert result.text == text
+
+
 def test_gemini_malformed_function_call_is_rejected() -> None:
     function_call = SimpleNamespace(name="weather", args="location=Ujjain")
     part = SimpleNamespace(function_call=function_call)
