@@ -9,7 +9,7 @@ from openai import OpenAI
 
 from app.config import Settings
 from app.errors import InvalidProviderResponseError, LLMProviderError
-from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 
 
 class OpenAIProvider(LLMProvider):
@@ -30,12 +30,17 @@ class OpenAIProvider(LLMProvider):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         del think
         if tool_result is not None and tool_call is not None:
             return self._generate_after_tool_result(tool_call, tool_result)
 
-        payload: dict[str, Any] = {"model": self._model, "input": prompt}
+        input_value: str | list[dict[str, str]] = prompt
+        if conversation:
+            input_value = [{"role": item.role, "content": item.content} for item in conversation]
+            input_value.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {"model": self._model, "input": input_value}
         if tools:
             payload["tools"] = [
                 {

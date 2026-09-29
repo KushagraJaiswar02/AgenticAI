@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from app.errors import LLMProviderError
-from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,7 @@ class FakeGeneration:
     tools: list[ToolDefinition] | None
     tool_call: ToolCall | None
     tool_result: dict[str, Any] | None
+    conversation: list[ConversationMessage] | None = None
 
 
 class FakeLLMProvider(LLMProvider):
@@ -35,6 +36,7 @@ class FakeLLMProvider(LLMProvider):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         del think
         self.calls.append(
@@ -43,6 +45,7 @@ class FakeLLMProvider(LLMProvider):
                 tools=tools,
                 tool_call=tool_call,
                 tool_result=tool_result,
+                conversation=conversation,
             )
         )
         if self._index >= len(self._responses):

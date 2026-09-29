@@ -36,6 +36,14 @@ class LLMResponse:
     tool_call: ToolCall | None = None
 
 
+@dataclass(frozen=True)
+class ConversationMessage:
+    """Provider-neutral message from an earlier completed turn."""
+
+    role: str
+    content: str
+
+
 class LLMProvider(ABC):
     """Interface owned by JARVIS and consumed by the orchestrator."""
 
@@ -48,6 +56,7 @@ class LLMProvider(ABC):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         """Generate a response for a prompt, optionally with available tools or a tool result."""
         raise NotImplementedError

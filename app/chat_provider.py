@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from app.errors import InvalidProviderResponseError, LLMProviderError
-from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 
 
 class ChatCompletionProvider(LLMProvider):
@@ -27,6 +27,7 @@ class ChatCompletionProvider(LLMProvider):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         del think
         messages: list[dict[str, Any]] = [
@@ -34,8 +35,11 @@ class ChatCompletionProvider(LLMProvider):
                 "Tools are optional capabilities. If no tool is relevant, answer "
                 "the user's question directly using your own knowledge."
             )},
-            {"role": "user", "content": prompt},
         ]
+        for item in conversation or []:
+            if item.role in {"user", "assistant"}:
+                messages.append({"role": item.role, "content": item.content})
+        messages.append({"role": "user", "content": prompt})
         if tool_call is not None and tool_result is not None:
             messages.extend([
                 {

@@ -160,3 +160,74 @@ def test_explicit_search_location_wins_over_context(tmp_path: Path):
     )
 
     assert resolved.arguments["root"] == "my project"
+
+
+def test_two_turn_create_then_write_receives_prior_history_and_uses_context(tmp_path: Path):
+    responses = [
+        LLMResponse(tool_call=ToolCall("create_file", {"name": "green lanterns.txt", "location": "workspace"})), text_response(),
+        LLMResponse(tool_call=ToolCall("write_file", {"path": "example.txt", "content": "wrong"})), text_response(),
+    ]
+    workspace = tmp_path / "JARVIS"
+    workspace.mkdir()
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary)
+    provider = FakeLLMProvider(responses)
+    orchestrator = Orchestrator(
+        provider,
+        ToolRegistry(create_filesystem_tools(boundary, context)),
+        confirmation_callback=lambda _: "yes",
+    )
+
+    orchestrator.process("create a file named green lanterns.txt in the workspace")
+    orchestrator.process('write "hello" into the file we just created')
+
+    target = workspace / "green lanterns.txt"
+    assert target.read_text(encoding="utf-8") == "hello"
+    second_turn = provider.calls[2]
+    assert second_turn.conversation is not None
+    assert [item.role for item in second_turn.conversation] == ["user", "assistant", "assistant", "assistant"]
+    assert second_turn.conversation[0].content == "create a file named green lanterns.txt in the workspace"
+    assert "TOOL_CALL create_file" in second_turn.conversation[1].content
+    assert "TOOL_RESULT create_file" in second_turn.conversation[2].content
+    assert second_turn.conversation[3].content == "done"
+    assert context.last_created_path == target
+
+
+def test_history_is_bounded_and_session_state_isolated():
+    first = ConversationState()
+    for index in range(60):
+        first.record_turn(f"user {index}", f"assistant {index}")
+    assert len(first.history) == 50
+    assert [message.content for message in first.recent_messages()] == [
+        value for index in range(50, 60) for value in (f"user {index}", f"assistant {index}")
+    ]
+    second = ConversationState()
+    assert second.history == []
+    assert second.recent_messages() == []
+
+
+def test_golden_create_write_read_returns_actual_content(tmp_path: Path):
+    workspace = tmp_path / "JARVIS"
+    workspace.mkdir()
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary)
+    provider = FakeLLMProvider([
+        LLMResponse(tool_call=ToolCall("create_file", {"path": "green.txt"})), text_response(),
+        LLMResponse(tool_call=ToolCall("write_file", {"path": "wrong.txt", "content": "hello"})), text_response(),
+        LLMResponse(tool_call=ToolCall("read_file", {"path": "wrong.txt"})), LLMResponse(text="hello"),
+    ])
+    orchestrator = Orchestrator(
+        provider,
+        ToolRegistry(create_filesystem_tools(boundary, context)),
+        confirmation_callback=lambda _: "yes",
+    )
+
+    orchestrator.process("create green.txt")
+    orchestrator.process("write hello in it")
+    final = orchestrator.process("read it")
+
+    target = workspace / "green.txt"
+    assert target.read_text(encoding="utf-8") == "hello"
+    assert final == "hello"
+    assert provider.calls[5].tool_result["path"] == str(target)
+    assert provider.calls[5].tool_result["content"] == "hello"

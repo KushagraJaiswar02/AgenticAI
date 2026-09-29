@@ -118,3 +118,32 @@ def test_configured_provider_construction_failure_is_not_silent() -> None:
                 "ollama": lambda _: StubProvider(LLMResponse(text="local")),
             },
         )
+
+
+def test_provider_failure_logs_cause_reason_timing_and_redacts_secrets(caplog) -> None:
+    cause = TimeoutError("api_key=super-secret upstream timeout")
+    error = LLMProviderError("Gemini request failed")
+    error.__cause__ = cause
+    manager = ProviderManager([("gemini", StubProvider(error=error))])
+
+    with caplog.at_level(logging.WARNING, logger="jarvis"):
+        with pytest.raises(LLMProviderError, match="All configured"):
+            manager.generate("hello")
+
+    message = caplog.records[-1].getMessage()
+    assert "provider=gemini" in message
+    assert "exception_type=LLMProviderError" in message
+    assert "cause_type=TimeoutError" in message
+    assert "reason=timeout" in message
+    assert "elapsed_ms=" in message
+    assert "super-secret" not in message
+
+
+def test_provider_failure_logs_api_status_and_message() -> None:
+    class APIError(RuntimeError):
+        status_code = 429
+
+    error = APIError("provider rate limit exceeded")
+    manager = ProviderManager([("openai", StubProvider(error=error))])
+    with pytest.raises(LLMProviderError, match="All configured"):
+        manager.generate("hello")

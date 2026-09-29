@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.filesystem_context import FilesystemContext
+from app.filesystem_context import AmbiguousFilesystemReferenceError, MissingFilesystemReferenceError
 
 
 class PathResolver:
@@ -47,3 +48,17 @@ class PathResolver:
         if candidate.is_absolute():
             return candidate
         return self.context.current_directory / candidate
+
+    def resolve_directory_reference(self, value: str | Path) -> Path:
+        """Resolve an explicit directory reference without guessing among matches."""
+        candidate = self.resolve(value)
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        name = Path(str(value).strip()).name
+        matches = sorted(path for path in self.context.workspace_root.rglob(name) if path.is_dir())
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            listed = ", ".join(str(path) for path in matches[:5])
+            raise AmbiguousFilesystemReferenceError(f"Which directory do you mean: {listed}?")
+        raise MissingFilesystemReferenceError(f"Directory '{value}' was not found inside the workspace")

@@ -151,6 +151,82 @@ def test_last_created_file_resolves_without_search(tmp_path: Path):
     assert PathResolver(context).resolve("file I just created") == target
 
 
+def test_relative_create_and_read_share_workspace_base_path(tmp_path: Path):
+    boundary, context = make_context(tmp_path)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+
+    created = registry.execute("create_file", {"name": "encore.txt", "content": "hello"})
+    read = registry.execute("read_file", {"path": "encore.txt"})
+
+    assert Path(created.data["path"]) == context.workspace_root / "encore.txt"
+    assert Path(read.data["path"]) == Path(created.data["path"])
+
+
+def test_explicit_project_location_updates_shared_base_path(tmp_path: Path):
+    workspace = tmp_path / "WorkSpace"
+    project = workspace / "JARVIS"
+    project.mkdir(parents=True)
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary, project)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+
+    result = registry.execute("create_file", {"name": "test.py", "location": "project"})
+
+    assert Path(result.data["path"]) == project / "test.py"
+    assert context.current_directory == workspace
+
+
+def test_base_path_update_cannot_escape_workspace(tmp_path: Path):
+    boundary, context = make_context(tmp_path)
+    with pytest.raises(ValueError):
+        context.set_current_directory(tmp_path.parent)
+
+
+def test_change_directory_updates_cwd_without_changing_workspace_root(tmp_path: Path):
+    workspace = tmp_path / "WorkSpace"
+    project = workspace / "JARVIS"
+    project.mkdir(parents=True)
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary, project)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+
+    result = registry.execute("change_directory", {"location": "JARVIS"})
+
+    assert result.success is True
+    assert context.cwd == project
+    assert context.workspace_root == workspace
+
+
+def test_change_directory_rejects_outside_workspace_and_preserves_cwd(tmp_path: Path):
+    workspace = tmp_path / "WorkSpace"
+    project = workspace / "JARVIS"
+    project.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary, project)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+
+    with pytest.raises(Exception):
+        registry.execute("change_directory", {"path": str(outside)})
+
+    assert context.cwd == workspace
+
+
+def test_change_directory_reports_ambiguous_directory_names(tmp_path: Path):
+    workspace = tmp_path / "WorkSpace"
+    (workspace / "one" / "JARVIS").mkdir(parents=True)
+    (workspace / "two" / "JARVIS").mkdir(parents=True)
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+
+    with pytest.raises(AmbiguousFilesystemReferenceError):
+        registry.execute("change_directory", {"location": "JARVIS"})
+
+    assert context.cwd == workspace
+
+
 def test_conflicting_create_file_arguments_are_rejected(tmp_path: Path):
     boundary, context = make_context(tmp_path)
     registry = ToolRegistry(create_filesystem_tools(boundary, context))

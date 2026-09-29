@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
+import inspect
+import re
+import time
 from typing import Any, Callable
 
 from app.config import Settings
 from app.errors import InvalidProviderResponseError, LLMProviderError
-from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 
 
 class ProviderManager(LLMProvider):
@@ -32,30 +35,34 @@ class ProviderManager(LLMProvider):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         continuation = tool_call is not None and tool_result is not None
         candidates = self._ordered_candidates(continuation=continuation)
         failures: list[Exception] = []
         for name, provider in candidates:
             self._logger.info("LLM request starting with provider='%s'", name)
+            started = time.perf_counter()
             try:
-                response = provider.generate(
-                    prompt,
-                    tools=tools,
-                    tool_call=tool_call,
-                    tool_result=tool_result,
-                    think=think,
-                )
+                kwargs = {
+                    "tools": tools,
+                    "tool_call": tool_call,
+                    "tool_result": tool_result,
+                    "think": think,
+                }
+                if "conversation" in inspect.signature(provider.generate).parameters:
+                    kwargs["conversation"] = conversation
+                response = provider.generate(prompt, **kwargs)
                 self._active_provider = name if response.tool_call is not None else None
                 self._logger.info("LLM provider '%s' succeeded", name)
                 return response
             except (LLMProviderError, InvalidProviderResponseError) as exc:
                 failures.append(exc)
-                self._logger.warning("LLM provider '%s' failed: %s", name, self._safe_reason(exc))
+                self._log_failure(name, exc, started)
                 continue
             except Exception as exc:
                 failures.append(exc)
-                self._logger.warning("LLM provider '%s' failed unexpectedly", name)
+                self._log_failure(name, exc, started)
                 self._logger.debug("Provider failure details", exc_info=True)
                 continue
 
@@ -89,6 +96,42 @@ class ProviderManager(LLMProvider):
         if "unavailable" in text or "connection" in text or "dns" in text:
             return "unavailable"
         return error.__class__.__name__
+
+    @classmethod
+    def _failure_reason(cls, error: Exception) -> str:
+        reason = cls._safe_reason(error)
+        cause = error.__cause__ or error.__context__
+        if reason == error.__class__.__name__ and cause is not None:
+            return cls._safe_reason(cause)
+        return reason
+
+    def _log_failure(self, name: str, error: Exception, started: float) -> None:
+        cause = error.__cause__ or error.__context__
+        status_code = self._status_code(error) or (self._status_code(cause) if cause else None)
+        self._logger.warning(
+            "provider=%s status=failed exception_type=%s message=%s cause_type=%s cause=%s reason=%s status_code=%s elapsed_ms=%.1f",
+            name,
+            error.__class__.__name__,
+            self._safe_text(str(error)),
+            cause.__class__.__name__ if cause else "none",
+            self._safe_text(str(cause)) if cause else "none",
+            self._failure_reason(error),
+            status_code if status_code is not None else "none",
+            (time.perf_counter() - started) * 1000,
+        )
+
+    @staticmethod
+    def _status_code(error: Exception | None) -> int | str | None:
+        if error is None:
+            return None
+        response = getattr(error, "response", None)
+        return getattr(response, "status_code", None) or getattr(error, "status_code", None)
+
+    @staticmethod
+    def _safe_text(value: str) -> str:
+        text = re.sub(r"(?i)(api[_ -]?key|authorization|token|password|secret)\s*[:=]\s*[^\s,;]+", r"\1=[REDACTED]", value)
+        text = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
+        return text[:1000]
 
 
 def create_provider_manager(

@@ -49,6 +49,17 @@ class SearchInput(BaseModel):
     pattern: str
 
 
+class ChangeDirectoryInput(BaseModel):
+    location: str | None = Field(default=None, description="Directory to make the conversational working directory.")
+    path: str | None = Field(default=None, description="Compatibility path for the directory.")
+
+    @model_validator(mode="after")
+    def require_target(self) -> "ChangeDirectoryInput":
+        if not self.location and not self.path:
+            raise ValueError("change_directory requires location or path")
+        return self
+
+
 class FilePairInput(BaseModel):
     source: str
     destination: str
@@ -73,7 +84,8 @@ class FilesystemTool(Tool):
         normalized = dict(arguments)
         if normalized.get("name"):
             location = normalized.get("location") or normalized.get("directory") or "current directory"
-            semantic_path = self.resolver.resolve(location) / str(normalized["name"]).strip()
+            location_path = self.resolver.resolve(location)
+            semantic_path = location_path / str(normalized["name"]).strip()
             if normalized.get("path"):
                 existing_path = self.resolver.resolve(normalized["path"])
                 if existing_path != semantic_path:
@@ -87,6 +99,29 @@ class FilesystemTool(Tool):
             if key in normalized:
                 normalized[key] = str(self._path(normalized[key]))
         return normalized
+
+
+class ChangeDirectoryTool(FilesystemTool):
+    name = "change_directory"
+    description = "Change the conversational working directory inside the configured workspace."
+    input_model = ChangeDirectoryInput
+    risk_level = RiskLevel.LOW
+
+    def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(arguments)
+        value = normalized.get("location") or normalized.get("path")
+        if not value:
+            raise ToolArgumentError("change_directory requires a location")
+        normalized["path"] = str(self.resolver.resolve_directory_reference(value))
+        return normalized
+
+    def execute(self, arguments: ChangeDirectoryInput | dict[str, Any]) -> ToolExecutionResult:
+        value = arguments.path if isinstance(arguments, ChangeDirectoryInput) else arguments["path"]
+        path = self._path(value, exists=True)
+        if not path.is_dir():
+            raise ToolArgumentError("change_directory requires an existing directory")
+        self.context.set_current_directory(path)
+        return ToolExecutionResult(True, {"path": str(path), "cwd": str(path), "workspace_root": str(self.context.workspace_root), "status": "changed"})
 
 
 class ListDirectoryTool(FilesystemTool):
@@ -272,7 +307,7 @@ class DeleteFileTool(FilesystemTool):
 
 def create_filesystem_tools(boundary: FilesystemBoundary, context: FilesystemContext | None = None) -> list[Tool]:
     return [
-        ListDirectoryTool(boundary, context), SearchFilesTool(boundary, context), ReadFileTool(boundary, context),
+        ChangeDirectoryTool(boundary, context), ListDirectoryTool(boundary, context), SearchFilesTool(boundary, context), ReadFileTool(boundary, context),
         CreateDirectoryTool(boundary, context), CreateFileTool(boundary, context), WriteFileTool(boundary, context),
         CopyFileTool(boundary, context), MoveFileTool(boundary, context), RenameFileTool(boundary, context), DeleteFileTool(boundary, context),
     ]

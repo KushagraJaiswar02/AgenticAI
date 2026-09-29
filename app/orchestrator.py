@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import inspect
 import uuid
 from collections.abc import Callable
 
 from app.errors import ApplicationError, LLMProviderError, UnexpectedApplicationError
 from app.input import normalize_input
-from app.llm import LLMProvider, ToolCall
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 from app.local_router import LocalIntentRouter
 from app.tools import ToolExecutionResult, ToolRegistry
 from app.policy import ConfirmationRequiredError, PolicyDeniedError
@@ -44,7 +45,7 @@ class Orchestrator:
         request_id = str(uuid.uuid4())
         try:
             try:
-                response = self._llm.generate(normalized, tools=self._tool_registry.definitions())
+                response = self._generate(normalized, tools=self._tool_registry.definitions(), conversation=self._state.recent_messages())
             except LLMProviderError as exc:
                 fallback_call = self._local_router.route(normalized)
                 if fallback_call is None:
@@ -87,7 +88,9 @@ class Orchestrator:
                 text = response.text.strip()
                 return text or (self._tool_success_summary(last_result) if last_result else "I completed the request.")
             tool_call = self._state.resolve_filesystem_intent(response.tool_call, prompt)
+            self._state.record_tool_call(tool_call.name, tool_call.arguments)
             tool_result = self._execute_with_confirmation(tool_call.name, tool_call.arguments, request_id=request_id)
+            self._state.record_tool_result(tool_call.name, self._tool_result_payload(tool_result))
             if not tool_result.success:
                 return self._tool_failure_message(tool_call.name, tool_result.error)
             last_result = tool_result
@@ -95,9 +98,33 @@ class Orchestrator:
                 prompt,
                 tools=self._tool_registry.definitions(),
                 tool_call=tool_call,
-                tool_result=tool_result.data or {},
+                tool_result=self._tool_result_payload(tool_result),
             )
         return "I stopped after reaching the tool-step limit for this request."
+
+    @staticmethod
+    def _tool_result_payload(tool_result: ToolExecutionResult) -> dict:
+        payload = dict(tool_result.data or {})
+        if tool_result.tool_name not in {
+            "create_file", "read_file", "write_file", "list_directory", "change_directory",
+            "search_files", "create_directory", "copy_file", "move_file", "rename_file", "delete_file",
+        }:
+            return payload
+        payload.update(tool_result.as_dict())
+        return payload
+
+    def _generate(
+        self,
+        prompt: str,
+        *,
+        tools: list[ToolDefinition] | None = None,
+        conversation: list[ConversationMessage] | None = None,
+    ) -> LLMResponse:
+        """Pass history to providers while retaining compatibility with test/local adapters."""
+        generate = self._llm.generate
+        if "conversation" in inspect.signature(generate).parameters:
+            return generate(prompt, tools=tools, conversation=conversation)
+        return generate(prompt, tools=tools)
 
     def _record_response(self, user_message: str, response: str) -> str:
         self._state.record_turn(user_message, response)
@@ -152,6 +179,10 @@ class Orchestrator:
     def _tool_success_summary(self, tool_result: ToolExecutionResult) -> str:
         if tool_result.data is None:
             return "I completed the request."
+        if tool_result.data.get("status") == "created" and tool_result.data.get("path"):
+            return f"I created {tool_result.data['path']}."
+        if tool_result.data.get("status") == "written" and tool_result.data.get("path"):
+            return f"I wrote the content to {tool_result.data['path']}."
         if "temperature_c" in tool_result.data:
             temperature = tool_result.data.get("temperature_c")
             location = tool_result.data.get("location", "that location")
@@ -161,6 +192,8 @@ class Orchestrator:
             return f"The current local time is {tool_result.data['time']}."
         if "date" in tool_result.data:
             return f"Today is {tool_result.data['date']} ({tool_result.data.get('day', 'local time')})."
+        if "content" in tool_result.data:
+            return f"I read {tool_result.data.get('path', 'the file')}:\n{tool_result.data['content']}"
         if "result" in tool_result.data:
             return f"The result is {tool_result.data['result']}."
         if "python_version" in tool_result.data:

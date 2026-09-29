@@ -11,7 +11,7 @@ import httpx
 from app.complexity import TaskComplexityRouter
 from app.config import Settings
 from app.errors import InvalidProviderResponseError, LLMProviderError
-from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 
 
 class OllamaProvider(LLMProvider):
@@ -51,6 +51,7 @@ class OllamaProvider(LLMProvider):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         complexity = self._complexity_router.classify(prompt)
         selected_model = self._pending_model or (
@@ -82,8 +83,11 @@ class OllamaProvider(LLMProvider):
         else:
             messages = [
                 {"role": "system", "content": self._SYSTEM_INSTRUCTION},
-                {"role": "user", "content": prompt},
             ]
+            for item in conversation or []:
+                if item.role in {"user", "assistant"}:
+                    messages.append({"role": item.role, "content": item.content})
+            messages.append({"role": "user", "content": prompt})
         payload: dict[str, Any] = {
             "model": selected_model,
             "messages": messages,

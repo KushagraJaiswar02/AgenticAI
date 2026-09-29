@@ -9,7 +9,7 @@ from google.genai import types
 
 from app.config import Settings
 from app.errors import InvalidProviderResponseError, LLMProviderError
-from app.llm import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 
 
 class GeminiProvider(LLMProvider):
@@ -36,6 +36,7 @@ class GeminiProvider(LLMProvider):
         tool_call: ToolCall | None = None,
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
+        conversation: list[ConversationMessage] | None = None,
     ) -> LLMResponse:
         del think
         if tool_result is not None and tool_call is not None:
@@ -49,9 +50,16 @@ class GeminiProvider(LLMProvider):
             config = types.GenerateContentConfig(tools=[types.Tool(function_declarations=tool_declarations)])
 
         try:
+            contents: Any = prompt
+            if conversation:
+                contents = [
+                    types.Content(role=item.role, parts=[types.Part.from_text(text=item.content)])
+                    for item in conversation
+                ]
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt)]))
             response = self._client.models.generate_content(
                 model=self._model,
-                contents=prompt,
+                contents=contents,
                 config=config,
             )
         except Exception as exc:
