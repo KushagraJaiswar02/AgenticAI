@@ -79,8 +79,38 @@ def test_ambiguous_recent_files_are_not_guessed(tmp_path: Path):
     registry = ToolRegistry([CreateFileTool(boundary, context)])
     registry.execute("create_file", {"path": "a.txt"})
     registry.execute("create_file", {"path": "b.txt"})
+    context.last_selected_file = None
+    context.last_created_file = None
+    context.last_modified_file = None
+    context.last_read_file = None
     with pytest.raises(AmbiguousFilesystemReferenceError):
         PathResolver(context).resolve("that file")
+
+
+def test_authoritative_last_file_wins_over_older_recent_files(tmp_path: Path):
+    boundary, context = make_context(tmp_path)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+    registry.execute("create_file", {"path": "alpha.txt"})
+    registry.execute("create_file", {"path": "beta.txt"})
+
+    with pytest.raises(ConfirmationRequiredError) as pending:
+        registry.execute("write_file", {"path": "it", "content": "BETA"})
+    registry.execute("write_file", {"path": "it", "content": "BETA"}, confirmation_request=pending.value.request, confirmation_response="yes")
+    read = registry.execute("read_file", {"path": "it"})
+
+    assert Path(read.data["path"]).name == "beta.txt"
+    assert read.data["content"] == "BETA"
+
+
+def test_create_directory_and_list_do_not_change_cwd(tmp_path: Path):
+    boundary, context = make_context(tmp_path)
+    registry = ToolRegistry(create_filesystem_tools(boundary, context))
+    original = context.cwd
+
+    registry.execute("create_directory", {"name": "TestFolder"})
+    registry.execute("list_directory", {"path": "TestFolder"})
+
+    assert context.cwd == original
 
 
 def test_rejected_write_does_not_update_context(tmp_path: Path):

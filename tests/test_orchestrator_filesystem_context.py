@@ -57,7 +57,7 @@ def test_multiturn_create_write_read_rename_write_read(tmp_path: Path):
     assert provider.calls[-1].tool_result["content"] == "new content"
 
 
-def test_ambiguous_context_does_not_guess(tmp_path: Path):
+def test_authoritative_context_selects_most_recent_file(tmp_path: Path):
     responses = [
         LLMResponse(tool_call=ToolCall("create_file", {"path": "a.txt"})), text_response(),
         LLMResponse(tool_call=ToolCall("create_file", {"path": "b.txt"})), text_response(),
@@ -67,10 +67,9 @@ def test_ambiguous_context_does_not_guess(tmp_path: Path):
     orchestrator.process("create a.txt")
     orchestrator.process("create b.txt")
     result = orchestrator.process('write "x" to it')
-    assert "Which filesystem object do you mean" in result
-    assert not (context.current_workspace / "a.txt").read_text(encoding="utf-8") if (context.current_workspace / "a.txt").exists() else True
-    assert not (context.current_workspace / "b.txt").read_text(encoding="utf-8") if (context.current_workspace / "b.txt").exists() else True
-    assert orchestrator._state.pending_confirmation is None
+    assert "C:\\" in result or "b.txt" in result
+    assert orchestrator._state.pending_confirmation is not None
+    assert "b.txt" in orchestrator._state.pending_confirmation.request.prompt
 
 
 def test_missing_context_asks_for_target(tmp_path: Path):
@@ -231,3 +230,35 @@ def test_golden_create_write_read_returns_actual_content(tmp_path: Path):
     assert final == "hello"
     assert provider.calls[5].tool_result["path"] == str(target)
     assert provider.calls[5].tool_result["content"] == "hello"
+
+
+def test_valid_directory_tool_call_is_not_overwritten_by_create_verb(tmp_path: Path):
+    workspace = tmp_path / "JARVIS"
+    workspace.mkdir()
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary)
+    state = ConversationState(filesystem_context=context)
+
+    resolved = state.resolve_filesystem_intent(
+        ToolCall("create_directory", {"name": "testfolder", "location": "workspace"}),
+        "create a folder called testfolder",
+    )
+
+    assert resolved.name == "create_directory"
+    result = ToolRegistry(create_filesystem_tools(boundary, context)).execute(resolved.name, resolved.arguments)
+    assert Path(result.data["path"]).is_dir()
+
+
+def test_filesystem_tools_and_conversation_state_share_context(tmp_path: Path):
+    workspace = tmp_path / "JARVIS"
+    workspace.mkdir()
+    boundary = FilesystemBoundary([workspace])
+    context = FilesystemContext.create(workspace, boundary)
+    tools = create_filesystem_tools(boundary, context)
+    registry = ToolRegistry(tools)
+    state = ConversationState(filesystem_context=context)
+    orchestrator = Orchestrator(FakeLLMProvider([]), registry, state=state)
+
+    assert state.filesystem_context is context
+    assert orchestrator._state.filesystem_context is context
+    assert all(getattr(tool, "context", None) is context for tool in tools)

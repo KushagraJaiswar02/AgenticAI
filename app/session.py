@@ -108,6 +108,12 @@ class ConversationState:
     def resolve_filesystem_intent(self, tool_call: ToolCall, user_message: str) -> ToolCall:
         """Correct only clear filesystem operation intent before argument resolution."""
         tokens = self._tokens(user_message)
+        valid_tools = {
+            "create_file", "create_directory", "read_file", "write_file", "delete_file",
+            "rename_file", "move_file", "list_directory", "search_files", "change_directory",
+        }
+        if tool_call.name in valid_tools and not self._obviously_incompatible(tool_call.name, tokens):
+            return self.prepare_tool_call(tool_call, user_message)
         operation = next((token for token in tokens if token in {
             "create", "read", "write", "delete", "rename", "move", "list", "search", "change", "go",
         }), None)
@@ -129,6 +135,19 @@ class ConversationState:
             ToolCall(name=tool_name, arguments=tool_call.arguments, call_id=tool_call.call_id),
             user_message,
         )
+
+    @staticmethod
+    def _obviously_incompatible(tool_name: str, tokens: list[str]) -> bool:
+        operation = next((token for token in tokens if token in {
+            "create", "read", "write", "delete", "rename", "move", "list", "search", "change", "go",
+        }), None)
+        if tool_name == "list_directory" and operation in {"read", "write", "delete", "rename", "move"}:
+            return True
+        if operation == "create" and tool_name in {"create_file", "create_directory"}:
+            wants_directory = any(token in {"folder", "directory"} for token in tokens)
+            wants_file = "file" in tokens
+            return (wants_directory and tool_name == "create_file") or (wants_file and tool_name == "create_directory")
+        return False
 
     @staticmethod
     def _tokens(message: str) -> list[str]:

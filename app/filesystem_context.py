@@ -86,7 +86,8 @@ class FilesystemContext:
 
     def remember_directory(self, path: str | Path, *, created: bool = False) -> None:
         resolved = Path(path)
-        self.current_directory = resolved
+        # Observation and creation update directory recency only. Navigation is
+        # exclusively performed by the successful change_directory tool.
         self.last_created_path = resolved if created else self.last_created_path
         self.last_created_directory = resolved if created else self.last_created_directory
         self.last_created_location = self.semantic_location(resolved) if created else self.last_created_location
@@ -113,6 +114,10 @@ class FilesystemContext:
             self.last_relevant_path = self.recent_paths[0] if self.recent_paths else None
 
     def conversational_path(self, *, kind: str | None = None) -> Path:
+        if kind == "file":
+            for candidate in (self.last_selected_file, self.last_created_file, self.last_modified_file, self.last_read_file):
+                if candidate is not None and candidate.exists() and candidate.is_file():
+                    return candidate
         candidates = [item for item in self.recent_paths if item.exists()]
         if kind == "file":
             candidates = [item for item in candidates if item.is_file()]
