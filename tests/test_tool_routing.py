@@ -48,6 +48,15 @@ def test_registered_current_page_is_not_remapped_by_list_verb():
     assert result == call
 
 
+def test_registered_search_web_is_not_remapped_by_search_verb():
+    state = ConversationState()
+    call = ToolCall("search_web", {"query": "jarvis"})
+
+    result = state.resolve_filesystem_intent(call, "search for jarvis on google", {"search_web"})
+
+    assert result == call
+
+
 def test_filesystem_tool_still_remaps_incompatible_intent():
     state = ConversationState()
     call = ToolCall("list_directory", {"path": "ARCHITECTURE.md"})

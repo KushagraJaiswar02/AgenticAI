@@ -33,9 +33,12 @@ execute()
 - delete file with confirmation
 
 ### Browser
-- open URL
-- search web
-- browser navigation
+- `open_browser`
+- `open_url`
+- `get_current_page`
+- `search_web`
+
+Back, forward, and reload navigation are not implemented.
 
 ### Memory
 - remember

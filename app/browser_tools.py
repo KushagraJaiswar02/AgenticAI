@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.browser_context import BrowserContext
 from app.policy import RiskLevel
@@ -17,7 +17,25 @@ class OpenBrowserInput(BaseModel):
 
 
 class OpenUrlInput(BaseModel):
-    url: str = Field(description="An absolute HTTP or HTTPS URL to open.")
+    url: str = Field(description="An absolute HTTP or HTTPS URL to open. Use the parameter name 'url' exactly.")
+
+
+class SearchWebInput(BaseModel):
+    query: str = Field(
+        min_length=1,
+        max_length=300,
+        description="Non-empty search terms, up to 300 characters. Use the parameter name 'query' exactly.",
+    )
+    engine: str = Field(
+        default="google",
+        description="Search engine, either 'google' or 'duckduckgo'. Use the parameter name 'engine' exactly.",
+    )
+
+    @model_validator(mode="after")
+    def require_non_whitespace_query(self) -> "SearchWebInput":
+        if not self.query.strip():
+            raise ValueError("Search query must not be empty")
+        return self
 
 
 class EmptyBrowserInput(BaseModel):
@@ -33,6 +51,14 @@ def _valid_url(value: str) -> bool:
         and parsed.username is None
         and parsed.password is None
     )
+
+
+def normalize_url(value: str) -> str:
+    """Add HTTPS only to scheme-less dotted hostnames."""
+    parsed = urlparse(value)
+    if not any(character.isspace() for character in value) and not parsed.scheme and "." in value:
+        return f"https://{value}"
+    return value
 
 
 class BrowserTool(Tool):
@@ -64,11 +90,34 @@ class OpenUrlTool(BrowserTool):
     risk_level = RiskLevel.LOW
 
     def execute(self, arguments: OpenUrlInput | dict[str, Any]) -> ToolExecutionResult:
-        url = arguments.url if isinstance(arguments, OpenUrlInput) else str(arguments["url"])
+        raw_url = arguments.url if isinstance(arguments, OpenUrlInput) else str(arguments["url"])
+        url = normalize_url(raw_url)
         if not _valid_url(url):
             data = {"status": "invalid_url", "error": "URL must be an absolute HTTP or HTTPS URL without credentials"}
             return ToolExecutionResult(False, data=data, error=data["error"])
         data = self.context.open_url(url)
+        return ToolExecutionResult(data.get("status") == "navigated", data=data, error=data.get("error"))
+
+
+class SearchWebTool(BrowserTool):
+    name = "search_web"
+    description = "Search the web with Google or DuckDuckGo using the controlled browser."
+    input_model = SearchWebInput
+    risk_level = RiskLevel.LOW
+    _SEARCH_URLS = {
+        "google": "https://www.google.com/search?q={}",
+        "duckduckgo": "https://duckduckgo.com/?q={}",
+    }
+
+    def execute(self, arguments: SearchWebInput | dict[str, Any]) -> ToolExecutionResult:
+        query = arguments.query if isinstance(arguments, SearchWebInput) else str(arguments["query"])
+        engine = arguments.engine if isinstance(arguments, SearchWebInput) else str(arguments.get("engine", "google"))
+        template = self._SEARCH_URLS.get(engine)
+        if template is None:
+            error = "Search engine must be 'google' or 'duckduckgo'"
+            data = {"status": "invalid_engine", "error": error}
+            return ToolExecutionResult(False, data=data, error=error)
+        data = self.context.open_url(template.format(quote_plus(query)))
         return ToolExecutionResult(data.get("status") == "navigated", data=data, error=data.get("error"))
 
 
@@ -86,4 +135,4 @@ class GetCurrentPageTool(BrowserTool):
 
 def create_browser_tools(context: BrowserContext | None = None) -> list[Tool]:
     context = context or BrowserContext()
-    return [OpenBrowserTool(context), OpenUrlTool(context), GetCurrentPageTool(context)]
+    return [OpenBrowserTool(context), OpenUrlTool(context), GetCurrentPageTool(context), SearchWebTool(context)]
