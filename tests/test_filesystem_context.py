@@ -7,6 +7,8 @@ from app.filesystem_security import FilesystemBoundary, FilesystemBoundaryError
 from app.filesystem_tools import DeleteFileTool, CreateFileTool, ReadFileTool, RenameFileTool, WriteFileTool, create_filesystem_tools
 from app.path_resolver import PathResolver
 from app.policy import ConfirmationRequiredError
+from app.session import ConversationState
+from app.llm import ToolCall
 from app.tools import ToolRegistry
 
 
@@ -111,6 +113,58 @@ def test_create_directory_and_list_do_not_change_cwd(tmp_path: Path):
     registry.execute("list_directory", {"path": "TestFolder"})
 
     assert context.cwd == original
+
+
+def test_windows_target_after_preserves_case_and_backslashes():
+    prompt = r"read ARCHITECTURE.md from C:\PROJECTSPACE\WorkSpace\JARVIS\docs"
+    tokens = ConversationState._tokens(prompt)
+    assert ConversationState._target_after(tokens, {"from"}) == r"C:\PROJECTSPACE\WorkSpace\JARVIS\docs"
+
+
+def test_read_absolute_llm_path_is_not_overwritten_by_prompt_directory():
+    directory = r"C:\PROJECTSPACE\WorkSpace\JARVIS\docs"
+    absolute = directory + r"\ARCHITECTURE.md"
+    state = ConversationState()
+    result = state.prepare_tool_call(ToolCall("read_file", {"path": absolute}), f"read ARCHITECTURE.md from {directory}")
+    assert result.arguments["path"] == absolute
+
+
+def test_read_bare_llm_name_is_joined_to_explicit_directory():
+    directory = r"C:\PROJECTSPACE\WorkSpace\JARVIS\docs"
+    state = ConversationState()
+    result = state.prepare_tool_call(ToolCall("read_file", {"path": "ARCHITECTURE.md"}), f"read ARCHITECTURE.md from {directory}")
+    assert result.arguments["path"] == str(Path(directory) / "ARCHITECTURE.md")
+
+
+def test_read_bare_name_join_rejects_traversal_and_drive_paths():
+    directory = r"C:\PROJECTSPACE\WorkSpace\JARVIS\docs"
+    state = ConversationState()
+    for name in (r"..\..\secret.txt", r"D:\x.txt"):
+        result = state.prepare_tool_call(ToolCall("read_file", {"path": name}), f"read file from {directory}")
+        assert result.arguments["path"] == name
+
+
+def test_rename_destination_preserves_case():
+    state = ConversationState()
+    result = state.prepare_tool_call(ToolCall("rename_file", {"source": "a.txt", "destination": "wrong.md"}), "rename a.txt to Report.md")
+    assert result.arguments["destination"] == "Report.md"
+
+
+def test_read_it_still_resolves_from_filesystem_context(tmp_path: Path):
+    boundary, context = make_context(tmp_path)
+    target = context.workspace_root / "created.txt"
+    target.write_text("content", encoding="utf-8")
+    context.remember_file(target, created=True)
+    state = ConversationState(filesystem_context=context)
+    result = state.prepare_tool_call(ToolCall("read_file", {"path": "placeholder.txt"}), "read it")
+    assert PathResolver(context).resolve(result.arguments["path"]) == target
+
+
+def test_quoted_directory_with_spaces_is_preserved():
+    directory = r"C:\My Docs\x"
+    state = ConversationState()
+    result = state.prepare_tool_call(ToolCall("read_file", {"path": "notes.txt"}), r'read "notes.txt" from "C:\My Docs\x"')
+    assert result.arguments["path"] == str(Path(directory) / "notes.txt")
 
 
 def test_rejected_write_does_not_update_context(tmp_path: Path):

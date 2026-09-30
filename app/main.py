@@ -24,6 +24,8 @@ from app.tools import (
 from app.filesystem_security import FilesystemBoundary
 from app.filesystem_tools import create_filesystem_tools
 from app.filesystem_context import FilesystemContext
+from app.browser_context import BrowserContext
+from app.browser_tools import create_browser_tools
 from app.session import ConversationState
 
 
@@ -42,6 +44,7 @@ def main() -> int:
 
     boundary = FilesystemBoundary(list(settings.filesystem_allowed_roots))
     filesystem_context = FilesystemContext.create(settings.jarvis_workspace, boundary, settings.project_root)
+    browser_context = BrowserContext()
     tool_registry = ToolRegistry(
         [
             WeatherTool(),
@@ -51,11 +54,16 @@ def main() -> int:
             SystemInfoTool(),
             OpenApplicationTool(),
             *create_filesystem_tools(boundary, filesystem_context),
+            *create_browser_tools(browser_context),
         ]
     )
-    state = ConversationState(filesystem_context=filesystem_context)
+    state = ConversationState(filesystem_context=filesystem_context, browser_context=browser_context)
     orchestrator = Orchestrator(llm_provider, tool_registry=tool_registry, logger=logger, confirmation_callback=lambda prompt: input(f"JARVIS: {prompt}\n> "), state=state)
 
+    return _run_cli_loop(orchestrator, logger)
+
+
+def _run_cli_loop(orchestrator: Orchestrator, logger: logging.Logger) -> int:
     print("JARVIS V0.1. Type 'exit' or 'quit' to stop.")
     while True:
         try:
@@ -63,6 +71,8 @@ def main() -> int:
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
+        if not message:
+            continue
         if message.lower() in {"exit", "quit"}:
             return 0
         try:

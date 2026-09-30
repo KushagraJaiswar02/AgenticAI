@@ -7,11 +7,13 @@ import inspect
 import uuid
 from collections.abc import Callable
 
+from pydantic import ValidationError
+
 from app.errors import ApplicationError, LLMProviderError, UnexpectedApplicationError
 from app.input import normalize_input
 from app.llm import ConversationMessage, LLMProvider, LLMResponse, ToolCall, ToolDefinition
 from app.local_router import LocalIntentRouter
-from app.tools import ToolExecutionResult, ToolRegistry
+from app.tools import ToolArgumentError, ToolExecutionResult, ToolRegistry
 from app.policy import ConfirmationRequiredError, PolicyDeniedError
 from app.session import ConversationState, PendingConfirmation
 from app.filesystem_context import AmbiguousFilesystemReferenceError, MissingFilesystemReferenceError
@@ -34,7 +36,10 @@ class Orchestrator:
         self._logger = logger or logging.getLogger("jarvis")
         self._local_router = local_router or LocalIntentRouter()
         self._confirmation_callback = confirmation_callback
-        self._state = state or ConversationState(filesystem_context=self._filesystem_context_from_registry())
+        self._state = state or ConversationState(
+            filesystem_context=self._filesystem_context_from_registry(),
+            browser_context=self._browser_context_from_registry(),
+        )
 
     def process(self, user_message: str) -> str:
         normalized = normalize_input(user_message)
@@ -81,15 +86,46 @@ class Orchestrator:
                 return context
         return None
 
+    def _browser_context_from_registry(self):
+        for name in self._tool_registry.list():
+            tool = self._tool_registry.get(name)
+            context = getattr(tool, "context", None)
+            if context is not None and hasattr(context, "browser_running"):
+                return context
+        return None
+
     def _continue_tool_calls(self, response, prompt: str, request_id: str) -> str:
         last_result: ToolExecutionResult | None = None
+        validation_retries = 0
         for _ in range(8):
             if response.tool_call is None:
                 text = response.text.strip()
                 return text or (self._tool_success_summary(last_result) if last_result else "I completed the request.")
+            self._logger.debug("Raw LLM tool call: %s", response.tool_call)
             tool_call = self._state.resolve_filesystem_intent(response.tool_call, prompt)
             self._state.record_tool_call(tool_call.name, tool_call.arguments)
-            tool_result = self._execute_with_confirmation(tool_call.name, tool_call.arguments, request_id=request_id)
+            try:
+                tool_result = self._execute_with_confirmation(tool_call.name, tool_call.arguments, request_id=request_id)
+            except (ToolArgumentError, ValidationError) as exc:
+                if not self._is_schema_validation_error(exc):
+                    raise
+                if validation_retries >= 2:
+                    return self._tool_failure_message(tool_call.name, str(exc))
+                validation_retries += 1
+                retry_payload = self._validation_error_payload(tool_call, exc)
+                self._logger.warning(
+                    "Retrying tool call after schema validation failure tool=%s retry=%d/2",
+                    tool_call.name,
+                    validation_retries,
+                )
+                self._state.record_tool_result(tool_call.name, retry_payload)
+                response = self._llm.generate(
+                    prompt,
+                    tools=self._tool_registry.definitions(),
+                    tool_call=tool_call,
+                    tool_result=retry_payload,
+                )
+                continue
             self._state.record_tool_result(tool_call.name, self._tool_result_payload(tool_result))
             if not tool_result.success:
                 return self._tool_failure_message(tool_call.name, tool_result.error)
@@ -101,6 +137,51 @@ class Orchestrator:
                 tool_result=self._tool_result_payload(tool_result),
             )
         return "I stopped after reaching the tool-step limit for this request."
+
+    @staticmethod
+    def _is_schema_validation_error(exc: Exception) -> bool:
+        return isinstance(exc, ValidationError) or (
+            isinstance(exc, ToolArgumentError) and isinstance(exc.__cause__, ValidationError)
+        )
+
+    def _validation_error_payload(self, tool_call: ToolCall, exc: Exception) -> dict:
+        definition = next(
+            (definition for definition in self._tool_registry.definitions() if definition.name == tool_call.name),
+            None,
+        )
+        expected_schema = definition.parameters if definition else {}
+        expected_keys = set(expected_schema.get("properties", {}))
+        supplied_keys = set(tool_call.arguments)
+        missing_keys = sorted(
+            set(expected_schema.get("required", [])) - supplied_keys
+        )
+        unexpected_keys = sorted(supplied_keys - expected_keys)
+        cause = exc if isinstance(exc, ValidationError) else exc.__cause__
+        if isinstance(cause, ValidationError):
+            for error in cause.errors():
+                location = error.get("loc", ())
+                key = str(location[0]) if location else "<root>"
+                if error.get("type") == "missing" and key not in missing_keys:
+                    missing_keys.append(key)
+                if error.get("type") == "extra_forbidden" and key not in unexpected_keys:
+                    unexpected_keys.append(key)
+        missing_keys.sort()
+        unexpected_keys.sort()
+        message = (
+            "Tool argument validation failed. "
+            f"Missing keys: {', '.join(missing_keys) or 'none'}. "
+            f"Unexpected keys: {', '.join(unexpected_keys) or 'none'}. "
+            f"Expected schema: {expected_schema}"
+        )
+        return {
+            "success": False,
+            "tool_name": tool_call.name,
+            "result": None,
+            "error": message,
+            "missing_keys": missing_keys,
+            "unexpected_keys": unexpected_keys,
+            "expected_schema": expected_schema,
+        }
 
     @staticmethod
     def _tool_result_payload(tool_result: ToolExecutionResult) -> dict:

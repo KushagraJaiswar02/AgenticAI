@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import shlex
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.confirmation import ConfirmationRequest
 from app.filesystem_context import FilesystemContext
+from app.browser_context import BrowserContext
 from app.llm import ConversationMessage, ToolCall
 from app.path_resolver import PathResolver
 
@@ -23,6 +25,7 @@ class PendingConfirmation:
 @dataclass
 class ConversationState:
     filesystem_context: FilesystemContext | None = None
+    browser_context: BrowserContext | None = None
     history: list[tuple[str, str]] = field(default_factory=list)
     message_history: list[ConversationMessage] = field(default_factory=list)
     pending_tool_events: list[ConversationMessage] = field(default_factory=list)
@@ -62,6 +65,7 @@ class ConversationState:
         """Preserve explicit turn arguments and resolve pronoun targets structurally."""
         arguments = dict(tool_call.arguments)
         tokens = self._tokens(user_message)
+        lowered = self._lower_tokens(tokens)
         if tool_call.name in {"create_file", "create_directory"}:
             target = self._target_after(tokens, {"in", "inside", "into", "to"})
             if target and "location" not in arguments:
@@ -73,20 +77,24 @@ class ConversationState:
             quoted = self._quoted_values(user_message)
             if quoted:
                 arguments["content"] = quoted[-1]
-            if self._mentions_recent_file(tokens):
+            if self._mentions_recent_file(lowered):
                 arguments["path"] = "file we just created"
             else:
                 target = self._target_after(tokens, {"to", "in", "into"})
-            if not self._mentions_recent_file(tokens) and target:
+            if not self._mentions_recent_file(lowered) and target:
                 arguments["path"] = target
             elif arguments.get("path") == arguments.get("content"):
                 arguments["path"] = "it"
         elif tool_call.name in {"read_file", "delete_file", "list_directory"}:
             target = self._target_after(tokens, {"to", "in", "from"})
-            if target:
-                arguments["path" if tool_call.name != "list_directory" else "path"] = target
-            elif any(token in {"it", "this", "that"} for token in tokens):
+            path = arguments.get("path")
+            pronoun = any(token in {"it", "this", "that"} for token in lowered)
+            if pronoun:
                 arguments["path"] = "it"
+            elif not path and target:
+                arguments["path"] = target
+            elif path and target and self._is_bare_basename(path):
+                arguments["path"] = str(Path(target) / path)
         elif tool_call.name == "search_files":
             explicit_location = self._target_after(tokens, {"in", "inside", "under", "at"})
             if explicit_location:
@@ -101,7 +109,7 @@ class ConversationState:
             destination = self._target_after(tokens, {"to", "into"})
             if destination:
                 arguments["destination"] = destination
-            if any(token in {"it", "this", "that"} for token in tokens):
+            if any(token in {"it", "this", "that"} for token in lowered):
                 arguments["source"] = "it"
         return ToolCall(name=tool_call.name, arguments=arguments, call_id=tool_call.call_id)
 
@@ -114,7 +122,8 @@ class ConversationState:
         }
         if tool_call.name in valid_tools and not self._obviously_incompatible(tool_call.name, tokens):
             return self.prepare_tool_call(tool_call, user_message)
-        operation = next((token for token in tokens if token in {
+        lowered = self._lower_tokens(tokens)
+        operation = next((token for token in lowered if token in {
             "create", "read", "write", "delete", "rename", "move", "list", "search", "change", "go",
         }), None)
         tool_name = {
@@ -138,23 +147,35 @@ class ConversationState:
 
     @staticmethod
     def _obviously_incompatible(tool_name: str, tokens: list[str]) -> bool:
-        operation = next((token for token in tokens if token in {
+        lowered = ConversationState._lower_tokens(tokens)
+        operation = next((token for token in lowered if token in {
             "create", "read", "write", "delete", "rename", "move", "list", "search", "change", "go",
         }), None)
         if tool_name == "list_directory" and operation in {"read", "write", "delete", "rename", "move"}:
             return True
         if operation == "create" and tool_name in {"create_file", "create_directory"}:
-            wants_directory = any(token in {"folder", "directory"} for token in tokens)
-            wants_file = "file" in tokens
+            wants_directory = any(token in {"folder", "directory"} for token in lowered)
+            wants_file = "file" in lowered
             return (wants_directory and tool_name == "create_file") or (wants_file and tool_name == "create_directory")
         return False
 
     @staticmethod
     def _tokens(message: str) -> list[str]:
         try:
-            return [token.strip(".,!?;:").lower() for token in shlex.split(message)]
+            tokens = shlex.split(message, posix=False)
         except ValueError:
-            return message.lower().split()
+            tokens = message.split()
+        return [ConversationState._strip_matching_quotes(token.strip(".,!?;:")) for token in tokens]
+
+    @staticmethod
+    def _lower_tokens(tokens: list[str]) -> list[str]:
+        return [token.lower() for token in tokens]
+
+    @staticmethod
+    def _strip_matching_quotes(token: str) -> str:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
+            return token[1:-1]
+        return token
 
     @staticmethod
     def _quoted_values(message: str) -> list[str]:
@@ -174,14 +195,24 @@ class ConversationState:
 
     @staticmethod
     def _target_after(tokens: list[str], prepositions: set[str]) -> str | None:
-        for index, token in enumerate(tokens):
-            if token in prepositions and index + 1 < len(tokens):
+        lowered = [token.lower() for token in tokens]
+        wanted = {item.lower() for item in prepositions}
+        for index, token in enumerate(lowered):
+            if token in wanted and index + 1 < len(tokens):
                 target = tokens[index + 1:]
-                while target and target[0] in {"the", "file", "folder", "directory"}:
+                while target and target[0].lower() in {"the", "file", "folder", "directory"}:
                     target.pop(0)
                 if target:
                     return " ".join(target)
         return None
+
+    @staticmethod
+    def _is_bare_basename(value: Any) -> bool:
+        if not isinstance(value, str) or not value or value in {"..", "."} or ".." in value:
+            return False
+        if any(separator in value for separator in ("\\", "/")):
+            return False
+        return not (len(value) >= 2 and value[1] == ":")
 
     @staticmethod
     def _mentions_recent_file(tokens: list[str]) -> bool:

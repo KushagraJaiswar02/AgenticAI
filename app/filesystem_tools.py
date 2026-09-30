@@ -16,7 +16,7 @@ from app.policy import RiskLevel
 
 
 class PathInput(BaseModel):
-    path: str
+    path: str = Field(description="Absolute or workspace-relative path to the target. Use the parameter name 'path' exactly.")
 
 
 class CreateFileInput(BaseModel):
@@ -45,8 +45,8 @@ class CreateDirectoryInput(BaseModel):
 
 
 class SearchInput(BaseModel):
-    root: str | None = None
-    pattern: str
+    root: str | None = Field(default=None, description="Absolute or workspace-relative directory to search.")
+    pattern: str = Field(description="File-name pattern to search for.")
 
 
 class ChangeDirectoryInput(BaseModel):
@@ -61,12 +61,12 @@ class ChangeDirectoryInput(BaseModel):
 
 
 class FilePairInput(BaseModel):
-    source: str
-    destination: str
+    source: str = Field(description="Absolute or workspace-relative source file path.")
+    destination: str = Field(description="Absolute or workspace-relative destination file path.")
 
 
 class WriteInput(PathInput):
-    content: str
+    content: str = Field(description="Text content to write to the target file.")
 
 
 class FilesystemTool(Tool):
@@ -126,7 +126,7 @@ class ChangeDirectoryTool(FilesystemTool):
 
 class ListDirectoryTool(FilesystemTool):
     name = "list_directory"
-    description = "List entries in an allowed directory."
+    description = "List entries in an existing directory. Provide the directory path in the 'path' field."
     input_model = PathInput
     risk_level = RiskLevel.SAFE
 
@@ -163,7 +163,7 @@ class SearchFilesTool(FilesystemTool):
 
 class ReadFileTool(FilesystemTool):
     name = "read_file"
-    description = "Read a bounded text file inside an allowed root."
+    description = "Read text from an existing file. Provide the file path in the 'path' field."
     input_model = PathInput
     risk_level = RiskLevel.SAFE
 
