@@ -102,7 +102,11 @@ class Orchestrator:
                 text = response.text.strip()
                 return text or (self._tool_success_summary(last_result) if last_result else "I completed the request.")
             self._logger.debug("Raw LLM tool call: %s", response.tool_call)
-            tool_call = self._state.resolve_filesystem_intent(response.tool_call, prompt)
+            tool_call = self._state.resolve_filesystem_intent(
+                response.tool_call,
+                prompt,
+                registered_tool_names=set(self._tool_registry.list()),
+            )
             self._state.record_tool_call(tool_call.name, tool_call.arguments)
             try:
                 tool_result = self._execute_with_confirmation(tool_call.name, tool_call.arguments, request_id=request_id)

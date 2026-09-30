@@ -113,7 +113,12 @@ class ConversationState:
                 arguments["source"] = "it"
         return ToolCall(name=tool_call.name, arguments=arguments, call_id=tool_call.call_id)
 
-    def resolve_filesystem_intent(self, tool_call: ToolCall, user_message: str) -> ToolCall:
+    def resolve_filesystem_intent(
+        self,
+        tool_call: ToolCall,
+        user_message: str,
+        registered_tool_names: set[str] | None = None,
+    ) -> ToolCall:
         """Correct only clear filesystem operation intent before argument resolution."""
         tokens = self._tokens(user_message)
         valid_tools = {
@@ -122,6 +127,8 @@ class ConversationState:
         }
         if tool_call.name in valid_tools and not self._obviously_incompatible(tool_call.name, tokens):
             return self.prepare_tool_call(tool_call, user_message)
+        if tool_call.name not in valid_tools and registered_tool_names is not None and tool_call.name in registered_tool_names:
+            return tool_call
         lowered = self._lower_tokens(tokens)
         operation = next((token for token in lowered if token in {
             "create", "read", "write", "delete", "rename", "move", "list", "search", "change", "go",
