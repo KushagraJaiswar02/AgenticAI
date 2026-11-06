@@ -36,7 +36,7 @@ execute()
 - `open_browser`
 - `open_url`
 - `get_current_page`
-- `search_web`
+- `search_web` (default engine: DuckDuckGo)
 
 Back, forward, and reload navigation are not implemented.
 

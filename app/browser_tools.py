@@ -27,8 +27,8 @@ class SearchWebInput(BaseModel):
         description="Non-empty search terms, up to 300 characters. Use the parameter name 'query' exactly.",
     )
     engine: str = Field(
-        default="google",
-        description="Search engine, either 'google' or 'duckduckgo'. Use the parameter name 'engine' exactly.",
+        default="duckduckgo",
+        description="Search engine, either 'duckduckgo' (default) or 'google'. Use the parameter name 'engine' exactly.",
     )
 
     @model_validator(mode="after")
@@ -101,7 +101,12 @@ class OpenUrlTool(BrowserTool):
 
 class SearchWebTool(BrowserTool):
     name = "search_web"
-    description = "Search the web with Google or DuckDuckGo using the controlled browser."
+    description = (
+        "Open the search results page in the user's controlled browser. "
+        "This does not return result text, and the model cannot read the results. "
+        "Call this once per user request. After success, tell the user the results are open in their browser; "
+        "do not answer the query from memory as if you read the results, and do not retry with a refined query."
+    )
     input_model = SearchWebInput
     risk_level = RiskLevel.LOW
     _SEARCH_URLS = {
@@ -111,13 +116,19 @@ class SearchWebTool(BrowserTool):
 
     def execute(self, arguments: SearchWebInput | dict[str, Any]) -> ToolExecutionResult:
         query = arguments.query if isinstance(arguments, SearchWebInput) else str(arguments["query"])
-        engine = arguments.engine if isinstance(arguments, SearchWebInput) else str(arguments.get("engine", "google"))
+        engine = arguments.engine if isinstance(arguments, SearchWebInput) else str(arguments.get("engine", "duckduckgo"))
         template = self._SEARCH_URLS.get(engine)
         if template is None:
             error = "Search engine must be 'google' or 'duckduckgo'"
             data = {"status": "invalid_engine", "error": error}
             return ToolExecutionResult(False, data=data, error=error)
         data = self.context.open_url(template.format(quote_plus(query)))
+        if data.get("status") == "navigated" and "/sorry/" in urlparse(str(data.get("url", ""))).path:
+            error = "The search engine showed a verification page instead of results"
+            data = {**data, "status": "blocked", "error": error}
+            return ToolExecutionResult(False, data=data, error=error)
+        if data.get("status") == "navigated":
+            data = {**data, "note": "Results page opened in the browser. Page content is not available to you."}
         return ToolExecutionResult(data.get("status") == "navigated", data=data, error=data.get("error"))
 
 

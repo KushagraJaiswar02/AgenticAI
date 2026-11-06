@@ -130,7 +130,7 @@ def test_search_web_builds_encoded_engine_url(engine: str, expected: str):
     assert context.current_url == expected
 
 
-def test_search_web_quotes_unicode_and_defaults_to_google():
+def test_search_web_quotes_unicode_and_defaults_to_duckduckgo():
     backend = FakeBrowserBackend()
     registry, _ = make_registry(backend)
     registry.execute("open_browser", {})
@@ -138,7 +138,36 @@ def test_search_web_quotes_unicode_and_defaults_to_google():
     result = registry.execute("search_web", {"query": "東京"})
 
     assert result.success
-    assert result.data["url"] == "https://www.google.com/search?q=%E6%9D%B1%E4%BA%AC"
+    assert result.data["url"] == "https://duckduckgo.com/?q=%E6%9D%B1%E4%BA%AC"
+
+
+def test_search_web_success_includes_content_unavailable_note():
+    backend = FakeBrowserBackend()
+    registry, _ = make_registry(backend)
+    registry.execute("open_browser", {})
+
+    result = registry.execute("search_web", {"query": "jarvis"})
+
+    assert result.success
+    assert result.data["status"] == "navigated"
+    assert result.data["note"] == "Results page opened in the browser. Page content is not available to you."
+
+
+def test_search_web_blocks_google_verification_page():
+    class VerificationBackend(FakeBrowserBackend):
+        def navigate(self, url: str) -> tuple[str, str]:
+            self.url = "https://www.google.com/sorry/index"
+            self.title = "Before you continue"
+            return self.url, self.title
+
+    registry, _ = make_registry(VerificationBackend())
+    registry.execute("open_browser", {})
+
+    result = registry.execute("search_web", {"query": "jarvis", "engine": "google"})
+
+    assert not result.success
+    assert result.data["status"] == "blocked"
+    assert result.error == "The search engine showed a verification page instead of results"
 
 
 @pytest.mark.parametrize("arguments", [{"query": ""}, {"query": " "}, {"query": "x", "engine": "bing"}, {"query": "x" * 301}])
@@ -171,6 +200,8 @@ def test_search_web_is_registered_with_described_parameters():
 
     assert definition.parameters["properties"]["query"]["description"]
     assert definition.parameters["properties"]["engine"]["description"]
+    assert "does not return" in definition.description.lower()
+    assert "once" in definition.description.lower()
 
 
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "https://user:pass@example.com", "https://"])
