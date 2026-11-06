@@ -4,9 +4,9 @@
 
 JARVIS is a personal desktop AI assistant designed to interact with the user through text and voice, reason about requests using an LLM, retrieve relevant memory, and execute controlled actions on the user's computer and connected services.
 
-The project is initially a local Python application using a cloud LLM as its reasoning engine. Local models are available as an optional final fallback behind the same LLM
-abstraction. Ollama uses `llama3.2:3b` for fast/simple requests and
-`qwen3:4b` for clearly complex reasoning requests.
+The project is a local Python application using Gemini by default, with
+OpenRouter and xAI Grok as selectable cloud providers and Ollama as its local
+provider. Local model selection is task-based and configurable.
 
 ## 2. Core Principle
 
@@ -47,11 +47,9 @@ V0 is one release implemented through incremental internal stages. The first imp
 
 V0.2 adds a small, explicit tool layer to the existing provider-neutral orchestration pattern. The first concrete tool is a weather lookup. The weather tool is registered with a tool registry, validated with Pydantic, and executed only after the LLM makes a native function/tool call that the orchestrator accepts. The LLM does not directly execute tools; JARVIS controls execution and feeds the structured tool result back through the provider's native function-response flow.
 
-The local fallback path also supports deterministic routing between the two
-Ollama models. This exists because local testing showed that `qwen3:4b` has
-significant inference latency even for trivial requests, while `llama3.2:3b`
-responds rapidly. Forcing `/no_think` on Qwen is not treated as the
-performance solution.
+The local path deterministically routes general conversation to
+`llama3.2:3b`, coding/reasoning and tool work to `qwen3:4b`, and image input to
+`gemma3:4b` by default. Each task mapping can be configured independently.
 
 Application control is limited to an explicit allowlist. The current launcher
 supports Brave only; arbitrary shell commands and executable paths are not
@@ -62,9 +60,9 @@ accepted.
 - Runtime: Python 3.12 on Windows desktop.
 - Architecture: modular monolith.
 - Core libraries: SQLite, SQLAlchemy, Pydantic, python-dotenv, httpx, and pytest.
-- LLM: OpenAI Responses API through the official OpenAI Python SDK, behind a provider-neutral LLM interface.
-- Default V0.1 model: `gpt-5.6-luna`, configurable through `OPENAI_MODEL`.
-- Required LLM configuration: `OPENAI_API_KEY` and `OPENAI_MODEL`.
+- LLM providers: Gemini, OpenRouter, xAI Grok, and Ollama, behind a provider-neutral interface.
+- Cloud credentials: `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, and `GROK_API_KEY`.
+- Local defaults: `llama3.2:3b`, `qwen3:4b`, and `gemma3:4b`, with configurable task mappings.
 - Semantic memory: local ChromaDB behind a replaceable embeddings interface and memory-store boundary.
 - Voice: OpenAI audio API initially for STT and TTS, behind STT/TTS interfaces; push-to-talk only.
 - Browser: Playwright with Chromium initially.
@@ -72,7 +70,7 @@ accepted.
 - Validation: Pydantic schemas.
 
 Unrestricted shell execution and unrestricted filesystem access are not part of V0.
-The OpenAI SDK is confined to the OpenAI adapter/provider implementation. V0.1 does not use direct httpx calls for the OpenAI API, and API keys are never hardcoded or logged.
+The OpenAI-compatible SDK is used only as a transport by OpenRouter and Grok adapters. No direct OpenAI provider is registered. API keys are environment-only and are not logged.
 
 ## 4. v0 Scope
 

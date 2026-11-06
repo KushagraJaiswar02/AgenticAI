@@ -57,6 +57,7 @@ class LLMProvider(ABC):
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
         conversation: list[ConversationMessage] | None = None,
+        images: list[str] | None = None,
     ) -> LLMResponse:
         """Generate a response for a prompt, optionally with available tools or a tool result."""
         raise NotImplementedError

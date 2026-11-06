@@ -41,7 +41,7 @@ class Orchestrator:
             browser_context=self._browser_context_from_registry(),
         )
 
-    def process(self, user_message: str) -> str:
+    def process(self, user_message: str, *, images: list[str] | None = None) -> str:
         normalized = normalize_input(user_message)
         if not normalized:
             raise ApplicationError("Message must not be empty")
@@ -50,8 +50,10 @@ class Orchestrator:
         request_id = str(uuid.uuid4())
         try:
             try:
-                response = self._generate(normalized, tools=self._tool_registry.definitions(), conversation=self._state.recent_messages())
+                response = self._generate(normalized, tools=self._tool_registry.definitions(), conversation=self._state.recent_messages(), images=images)
             except LLMProviderError as exc:
+                if images:
+                    raise
                 fallback_call = self._local_router.route(normalized)
                 if fallback_call is None:
                     self._logger.warning(
@@ -70,7 +72,7 @@ class Orchestrator:
             if response.tool_call is None:
                 return self._record_response(normalized, response.text)
 
-            response = self._continue_tool_calls(response, normalized, request_id)
+            response = self._continue_tool_calls(response, normalized, request_id, images=images)
             return self._record_response(normalized, response)
         except ApplicationError:
             raise
@@ -94,7 +96,7 @@ class Orchestrator:
                 return context
         return None
 
-    def _continue_tool_calls(self, response, prompt: str, request_id: str) -> str:
+    def _continue_tool_calls(self, response, prompt: str, request_id: str, *, images: list[str] | None = None) -> str:
         last_result: ToolExecutionResult | None = None
         validation_retries = 0
         for _ in range(8):
@@ -123,22 +125,24 @@ class Orchestrator:
                     validation_retries,
                 )
                 self._state.record_tool_result(tool_call.name, retry_payload)
-                response = self._llm.generate(
+                response = self._generate(
                     prompt,
                     tools=self._tool_registry.definitions(),
                     tool_call=tool_call,
                     tool_result=retry_payload,
+                    images=images,
                 )
                 continue
             self._state.record_tool_result(tool_call.name, self._tool_result_payload(tool_result))
             if not tool_result.success:
                 return self._tool_failure_message(tool_call.name, tool_result.error)
             last_result = tool_result
-            response = self._llm.generate(
+            response = self._generate(
                 prompt,
                 tools=self._tool_registry.definitions(),
                 tool_call=tool_call,
                 tool_result=self._tool_result_payload(tool_result),
+                images=images,
             )
         return "I stopped after reaching the tool-step limit for this request."
 
@@ -204,12 +208,18 @@ class Orchestrator:
         *,
         tools: list[ToolDefinition] | None = None,
         conversation: list[ConversationMessage] | None = None,
+        tool_call: ToolCall | None = None,
+        tool_result: dict | None = None,
+        images: list[str] | None = None,
     ) -> LLMResponse:
         """Pass history to providers while retaining compatibility with test/local adapters."""
         generate = self._llm.generate
-        if "conversation" in inspect.signature(generate).parameters:
-            return generate(prompt, tools=tools, conversation=conversation)
-        return generate(prompt, tools=tools)
+        parameters = inspect.signature(generate).parameters
+        kwargs = {"tools": tools}
+        for name, value in (("conversation", conversation), ("tool_call", tool_call), ("tool_result", tool_result), ("images", images)):
+            if name in parameters:
+                kwargs[name] = value
+        return generate(prompt, **kwargs)
 
     def _record_response(self, user_message: str, response: str) -> str:
         self._state.record_turn(user_message, response)

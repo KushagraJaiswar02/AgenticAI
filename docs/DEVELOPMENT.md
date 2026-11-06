@@ -27,17 +27,18 @@ Core dependencies:
 - Pydantic
 - python-dotenv
 - httpx
-- official OpenAI Python SDK
+- Google Gen AI SDK
+- OpenAI compatible Python SDK transport (used by OpenRouter and Grok)
 - pytest
 
 V0 integration dependencies:
 
-- OpenAI Responses API through the official OpenAI Python SDK
+- Gemini, OpenRouter, Grok, and Ollama provider adapters
 - ChromaDB
 - Playwright with Chromium
 - pywinauto
 
-The exact package versions are UNSPECIFIED. V0.1 uses `gpt-5.6-luna` as the documented/default model, configurable through `OPENAI_MODEL`. The required environment variables are `OPENAI_API_KEY` and `OPENAI_MODEL`. Direct httpx calls are not used for the OpenAI API. No wake-word dependency, unrestricted shell library, remote vector database, or local foundation-model download is required.
+Gemini is the default cloud provider. OpenRouter and Grok use `OPENROUTER_API_KEY` and `GROK_API_KEY` respectively. Ollama is local and does not require cloud credentials. The model registry and task router are implemented in `app/model_registry.py` and `app/model_router.py`. No wake-word dependency, unrestricted shell library, remote vector database, or automatic model download is used.
 
 ## 3. Secrets
 
@@ -63,7 +64,7 @@ Maintain `.env.example` containing variable names only.
 Tests are separated by responsibility:
 
 - **Unit tests** cover configuration, normalization, tool schemas, registry behavior, weather parsing, and `FakeLLMProvider`.
-- **Provider tests** mock the Gemini and OpenAI SDKs and verify adapter normalization, native tool calls, errors, and Gemini thought-signature context preservation.
+- **Provider tests** mock Gemini and OpenAI-compatible SDK clients to verify provider adapter normalization, native tool calls, and errors. Model routing and Ollama lifecycle tests use fake HTTP clients.
 - **Orchestrator integration tests** use the real `Orchestrator` and `ToolRegistry` with `FakeLLMProvider`. They verify deterministic tool selection, execution, result handoff, failures, and sequential interactions without Gemini, OpenAI, DNS, Wi-Fi, or external weather services.
 - **Local fallback tests** verify that only recoverable `LLMProviderError` failures invoke the deterministic `LocalIntentRouter`; non-provider failures and unrecognized intents do not use it.
 - **Local tool tests** cover deterministic time, date, calculator, and system-information tools, including calculator safety rejection and registry dispatch.

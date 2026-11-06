@@ -22,6 +22,14 @@ def test_orchestrator_processes_message() -> None:
     assert Orchestrator(FakeLLM()).process("  hello  ") == "received hello"
 
 
+def test_orchestrator_passes_images_through_provider_boundary() -> None:
+    class ImageLLM(LLMProvider):
+        def generate(self, prompt, tools=None, *, tool_call=None, tool_result=None, images=None):
+            return LLMResponse(text=f"images={len(images or [])}")
+
+    assert Orchestrator(ImageLLM()).process("describe screenshot", images=["ZmFrZQ=="]) == "images=1"
+
+
 def test_orchestrator_rejects_empty_message() -> None:
     with pytest.raises(ApplicationError, match="must not be empty"):
         Orchestrator(FakeLLM()).process("  ")

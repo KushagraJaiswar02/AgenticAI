@@ -269,3 +269,23 @@ All tool calls pass through `PolicyEngine` and the `ToolRegistry` execution boun
 ### Reason
 
 LLM output is untrusted input. A single local policy boundary prevents provider and local-router paths from bypassing safety checks while keeping individual tools focused on validation and execution.
+
+---
+
+## ADR-025 — Milestone 1 Provider Set and Local Model Routing
+
+### Decision
+
+The active provider set is Gemini, OpenRouter, xAI Grok, and Ollama. This
+supersedes the provider choices in ADR-016 and ADR-023 for the current
+implementation. OpenAI's SDK remains only as the OpenAI-compatible transport
+for OpenRouter and Grok. Ollama uses a deterministic configurable model map for
+general, coding/reasoning, tool, and vision tasks. Offline mode only constructs
+Ollama. Ollama requests are serialized and unload the preceding model before
+switching; no model is downloaded automatically.
+
+### Reason
+
+Keep the cloud integration set small while preserving a provider-neutral
+boundary, and route local work to the intended model without allowing model
+selection to bypass tool policy or confirmation controls.

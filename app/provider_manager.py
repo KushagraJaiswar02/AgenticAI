@@ -36,11 +36,16 @@ class ProviderManager(LLMProvider):
         tool_result: dict[str, Any] | None = None,
         think: bool | None = None,
         conversation: list[ConversationMessage] | None = None,
+        images: list[str] | None = None,
     ) -> LLMResponse:
         continuation = tool_call is not None and tool_result is not None
         candidates = self._ordered_candidates(continuation=continuation)
         failures: list[Exception] = []
+        eligible_provider = False
         for name, provider in candidates:
+            if images and name != "ollama":
+                continue
+            eligible_provider = True
             self._logger.info("LLM request starting with provider='%s'", name)
             started = time.perf_counter()
             try:
@@ -52,6 +57,8 @@ class ProviderManager(LLMProvider):
                 }
                 if "conversation" in inspect.signature(provider.generate).parameters:
                     kwargs["conversation"] = conversation
+                if "images" in inspect.signature(provider.generate).parameters:
+                    kwargs["images"] = images
                 response = provider.generate(prompt, **kwargs)
                 self._active_provider = name if response.tool_call is not None else None
                 self._logger.info("LLM provider '%s' succeeded", name)
@@ -67,6 +74,8 @@ class ProviderManager(LLMProvider):
                 continue
 
         self._active_provider = None
+        if images and not eligible_provider:
+            raise LLMProviderError("No configured provider supports image input; configure Ollama vision")
         raise LLMProviderError("All configured LLM providers are currently unavailable") from (
             failures[-1] if failures else None
         )
@@ -142,30 +151,28 @@ def create_provider_manager(
 ) -> ProviderManager:
     logger = logger or logging.getLogger("jarvis")
     from app.gemini_provider import GeminiProvider
+    from app.grok_provider import GrokProvider
     from app.ollama_provider import OllamaProvider
-    from app.openai_provider import OpenAIProvider
 
     available: dict[str, Callable[[Settings], LLMProvider]] = constructors or {
         "gemini": GeminiProvider,
-        "openai": OpenAIProvider,
-        "groq": __import__("app.groq_provider", fromlist=["GroqProvider"]).GroqProvider,
-        "cerebras": __import__("app.cerebras_provider", fromlist=["CerebrasProvider"]).CerebrasProvider,
         "openrouter": __import__("app.openrouter_provider", fromlist=["OpenRouterProvider"]).OpenRouterProvider,
-        "cohere": __import__("app.cohere_provider", fromlist=["CohereProvider"]).CohereProvider,
-        "mistral": __import__("app.mistral_provider", fromlist=["MistralProvider"]).MistralProvider,
+        "grok": GrokProvider,
         "ollama": OllamaProvider,
     }
     configured_keys = {
         "gemini": settings.gemini_api_key,
-        "openai": settings.openai_api_key,
-        "groq": settings.groq_api_key and settings.groq_model,
-        "cerebras": settings.cerebras_api_key and settings.cerebras_model,
         "openrouter": settings.openrouter_api_key and settings.openrouter_model,
-        "cohere": settings.cohere_api_key and settings.cohere_model,
-        "mistral": settings.mistral_api_key and settings.mistral_model,
+        "grok": settings.grok_api_key,
         "ollama": True,
     }
-    ordered_names = list(dict.fromkeys(settings.llm_provider_order))
+    ordered_names = ["ollama"] if settings.offline_mode else list(dict.fromkeys(settings.llm_provider_order))
+    if not settings.offline_mode:
+        if settings.llm_provider in ordered_names:
+            ordered_names.remove(settings.llm_provider)
+        ordered_names.insert(0, settings.llm_provider)
+    if not settings.fallback_enabled and not settings.offline_mode:
+        ordered_names = [settings.llm_provider]
     providers: list[tuple[str, LLMProvider]] = []
     for name in ordered_names:
         constructor = available.get(name)

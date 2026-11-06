@@ -45,12 +45,19 @@ def test_manager_returns_controlled_error_when_all_fail() -> None:
         manager.generate("hello")
 
 
+def test_image_request_never_falls_back_to_text_only_provider() -> None:
+    cloud = StubProvider(LLMResponse(text="would ignore image"))
+    manager = ProviderManager([("gemini", cloud)])
+    with pytest.raises(LLMProviderError, match="supports image input"):
+        manager.generate("describe", images=["ZmFrZQ=="])
+    assert cloud.calls == 0
+
+
 def test_factory_skips_missing_cloud_keys_and_keeps_ollama() -> None:
     settings = Settings(
         llm_provider="gemini",
-        llm_provider_order=("gemini", "openai", "ollama"),
+        llm_provider_order=("gemini", "openrouter", "ollama"),
         gemini_api_key=None,
-        openai_api_key=None,
     )
     manager = create_provider_manager(
         settings,
@@ -59,52 +66,26 @@ def test_factory_skips_missing_cloud_keys_and_keeps_ollama() -> None:
     assert manager.generate("hello").text == "local"
 
 
-def test_factory_includes_every_configured_provider_in_declared_order() -> None:
-    order = ("gemini", "openai", "groq", "cerebras", "openrouter", "mistral", "cohere", "ollama")
+def test_factory_includes_configured_providers_in_declared_order() -> None:
+    order = ("gemini", "openrouter", "grok", "ollama")
     settings = Settings(
-        llm_provider="gemini",
-        llm_provider_order=order,
-        gemini_api_key="gemini-key",
-        gemini_model="gemini-model",
-        openai_api_key="openai-key",
-        openai_model="openai-model",
-        groq_api_key=None,
-        groq_model="groq-model",
-        cerebras_api_key="cerebras-key",
-        cerebras_model="cerebras-model",
-        openrouter_api_key="openrouter-key",
-        openrouter_model="openrouter-model",
-        mistral_api_key="mistral-key",
-        mistral_model="mistral-model",
-        cohere_api_key="cohere-key",
-        cohere_model="cohere-model",
+        llm_provider="gemini", llm_provider_order=order,
+        gemini_api_key="gemini-key", openrouter_api_key="router-key",
+        openrouter_model="router-model", grok_api_key="grok-key",
     )
     constructors = {
-        name: (lambda provider_name: lambda _: StubProvider(
-            LLMResponse(text=provider_name)
-        ))(name)
+        name: (lambda provider_name: lambda _: StubProvider(LLMResponse(text=provider_name)))(name)
         for name in order
     }
-
     manager = create_provider_manager(settings, constructors=constructors)
-
-    assert [name for name, _ in manager._providers] == [
-        "gemini",
-        "openai",
-        "cerebras",
-        "openrouter",
-        "mistral",
-        "cohere",
-        "ollama",
-    ]
+    assert [name for name, _ in manager._providers] == list(order)
 
 
 def test_configured_provider_construction_failure_is_not_silent() -> None:
     settings = Settings(
-        llm_provider="cerebras",
-        llm_provider_order=("cerebras", "ollama"),
-        cerebras_api_key="key",
-        cerebras_model="model",
+        llm_provider="grok",
+        llm_provider_order=("grok", "ollama"),
+        grok_api_key="key",
     )
 
     def broken_constructor(_):
@@ -114,7 +95,7 @@ def test_configured_provider_construction_failure_is_not_silent() -> None:
         create_provider_manager(
             settings,
             constructors={
-                "cerebras": broken_constructor,
+                "grok": broken_constructor,
                 "ollama": lambda _: StubProvider(LLMResponse(text="local")),
             },
         )
@@ -144,6 +125,6 @@ def test_provider_failure_logs_api_status_and_message() -> None:
         status_code = 429
 
     error = APIError("provider rate limit exceeded")
-    manager = ProviderManager([("openai", StubProvider(error=error))])
+    manager = ProviderManager([("grok", StubProvider(error=error))])
     with pytest.raises(LLMProviderError, match="All configured"):
         manager.generate("hello")

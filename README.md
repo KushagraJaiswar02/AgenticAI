@@ -1,6 +1,6 @@
 # JARVIS
 
-JARVIS is a local Python terminal assistant with a provider-neutral LLM interface. Gemini is the active default provider, and OpenAI remains available as a fallback.
+JARVIS is a local Python terminal assistant with a provider-neutral LLM interface. Gemini is the default cloud provider, with OpenRouter and xAI Grok selectable as alternatives and Ollama as the local provider.
 
 ## Current milestone
 
@@ -15,34 +15,31 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set `GEMINI_API_KEY` in `.env`. `GEMINI_MODEL` defaults to `gemini-3.8-flash` and may be changed there. Set `LLM_PROVIDER=openai` to use the OpenAI fallback with `OPENAI_API_KEY` and `OPENAI_MODEL`.
+Set `GEMINI_API_KEY` in `.env` to use the default cloud provider. OpenRouter uses `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`; Grok uses `GROK_API_KEY` and `GROK_MODEL`. OpenAI SDK is used internally as the compatible transport for OpenRouter and Grok, but direct OpenAI provider support has been removed.
 
-Provider failover follows `LLM_PROVIDER_ORDER` and skips providers whose
-implementation or required configuration is unavailable. Supported providers
-are Gemini, OpenAI, Groq, Cerebras, OpenRouter, Mistral, Cohere, and Ollama.
-The default order is
-`gemini,openai,groq,cerebras,openrouter,mistral,cohere,ollama`;
-`LLM_PROVIDER` is the preferred starting provider, not an exclusive selection.
-Each cloud provider has its own `*_MODEL` and `*_TIMEOUT` setting. Cloud requests use
-their configured 30-second default. Ollama uses
-`OLLAMA_SIMPLE_TIMEOUT` (20 seconds by default) and
-`OLLAMA_COMPLEX_TIMEOUT` (120 seconds by default).
+Provider failover follows `LLM_PROVIDER_ORDER`, beginning with `LLM_PROVIDER`.
+The default order is `gemini,openrouter,grok,ollama`; unavailable or unconfigured
+providers are skipped. Set `LLM_FALLBACK_ENABLED=false` to disable fallback. Set
+`JARVIS_OFFLINE_MODE=true` to restrict requests to Ollama, regardless of cloud
+provider configuration.
 
 Ollama is optional and must be installed separately:
 
 ```powershell
-ollama pull llama3.2:3b
-ollama pull qwen3:4b
 ollama list
 ```
 
-The local endpoint defaults to `http://localhost:11434`. Configure it with
-`OLLAMA_BASE_URL`, `OLLAMA_SIMPLE_MODEL`, and `OLLAMA_COMPLEX_MODEL`.
-`llama3.2:3b` handles clearly simple or ambiguous requests; `qwen3:4b`
-handles clearly complex analysis, debugging, planning, and multi-step work.
-The simple model is selected for speed rather than by forcing Qwen into
-`/no_think`; `/no_think` is not considered a performance solution.
-Only the complex Qwen path receives the optional thinking request field.
+Ollama defaults to `http://localhost:11434`. The deterministic router selects
+`OLLAMA_GENERAL_MODEL` (`llama3.2:3b`) for conversation, `OLLAMA_CODING_MODEL`
+and `OLLAMA_TOOL_MODEL` (`qwen3:4b`) for technical and tool work, and
+`OLLAMA_VISION_MODEL` (`gemma3:4b`) when image data is supplied through the
+provider interface. Uncertain requests use the general model.
+The registry is in `app/model_registry.py`; task classification is in
+`app/model_router.py`. Ollama requests are serialized, retain a selected model
+through tool continuation, unload the previous model before switching, and use
+configurable `OLLAMA_KEEP_ALIVE` (5m) and `OLLAMA_CONTEXT_WINDOW` (4096).
+JARVIS does not download missing models. Missing text models may fall back once
+to the configured general model; missing vision models return an error.
 
 `open_application` is intentionally allowlisted. The current supported
 application is `brave`; arbitrary executable paths, shell commands, and shell
@@ -101,7 +98,7 @@ The local router is a permanent JARVIS subsystem. Its implementation may
 evolve from deterministic rules into a hybrid semantic/local-model system, but
 the router-to-`ToolCall` boundary remains stable.
 
-Provider adapter tests mock the Gemini and OpenAI SDKs. Any future live Gemini
+Provider adapter tests mock the Gemini and OpenAI-compatible SDK clients. Any future live Gemini
 tests must be marked `integration` and run explicitly:
 
 ```powershell

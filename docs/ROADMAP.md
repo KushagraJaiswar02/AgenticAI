@@ -4,6 +4,14 @@
 
 V0 is one release implemented through the following incremental internal stages. These are not separate products.
 
+## Current provider milestone
+
+The active provider set is Gemini, OpenRouter, xAI Grok, and Ollama. The
+Milestone 1 provider cleanup supersedes the historical provider lists in the
+earlier V0.1 and V0.2/V0.3 stage notes below. Ollama task routing and sequential
+model lifecycle management are implemented; screenshot/image input is
+available through the provider boundary, while the current CLI remains text-only.
+
 ## V0.4 safety milestone
 
 - deterministic risk metadata and policy engine
@@ -17,7 +25,7 @@ V0 is one release implemented through the following incremental internal stages.
 
 - Python 3.12 Windows runtime
 - configuration and logging
-- provider-neutral LLM interface with OpenAI adapter
+- provider-neutral LLM interface with Gemini, OpenRouter, Grok, and Ollama adapters
 - basic orchestrator
 - text input and response
 
@@ -36,11 +44,11 @@ V0 is one release implemented through the following incremental internal stages.
 
 ## V0.2/V0.3 stabilization
 
-- Gemini → OpenAI → Ollama provider failover
-- Groq, Cerebras, OpenRouter, Mistral, and Cohere adapters
-- `llama3.2:3b` for simple local requests
-- `qwen3:4b` for complex local reasoning
-- separate simple/complex Ollama timeouts
+- configurable Gemini/OpenRouter/Grok/Ollama provider failover
+- `llama3.2:3b` for general conversation
+- `qwen3:4b` for coding, reasoning, and tools
+- `gemma3:4b` for image input
+- serialized Ollama model switching with configurable keep-alive and context window
 - tool-versus-knowledge system guidance
 
 ## V0.3 — Persistence and memory

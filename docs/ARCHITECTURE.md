@@ -90,9 +90,9 @@ Conceptually:
 generate(prompt) -> normalized LLM response
 ```
 
-The active V0 default is Gemini via the official Google Gen AI SDK. OpenAI remains available as a fallback through its own adapter. Provider logic stays inside each adapter; the orchestrator depends only on the LLM interface and never branches on provider-specific implementation details.
+Gemini is the default cloud provider. OpenRouter and xAI Grok are selectable cloud alternatives; Ollama is the local provider. Provider logic stays inside each adapter; the orchestrator depends only on the LLM interface and never branches on provider-specific implementation details.
 
-The active default model is `gemini-3.8-flash`, configured through `GEMINI_MODEL`. The fallback model is `gpt-5.6-luna`, configured through `OPENAI_MODEL`. Both APIs are accessed through provider adapters and environment configuration. No direct API calls are embedded in application business logic.
+Gemini defaults to `gemini-3.8-flash` (`GEMINI_MODEL`). OpenRouter uses `OPENROUTER_MODEL`; Grok uses `GROK_MODEL` (default `grok-3-mini`). `GROK_API_KEY` is the xAI credential. The OpenAI SDK remains a transport dependency for OpenAI-compatible OpenRouter and xAI endpoints; JARVIS has no direct OpenAI provider.
 
 For V0.2 tooling, providers expose native function/tool-calling capabilities through the same provider-neutral contract:
 - the LLM decides whether a tool is needed and which tool to call
@@ -108,22 +108,23 @@ execution authority. Unrecognized requests re-raise the provider failure.
 
 The provider manager owns request-scoped failover. It starts with
 `LLM_PROVIDER`, then follows `LLM_PROVIDER_ORDER`, skips unavailable
-implementations/configuration, applies finite request timeouts, and finally
-tries Ollama when configured. A failed provider is not permanently disabled.
-If all providers fail, a controlled `LLMProviderError` is returned to the
-existing application failure path.
+configuration, and returns a controlled `LLMProviderError` if all candidates
+fail. `JARVIS_OFFLINE_MODE=true` constructs only Ollama. Set
+`LLM_FALLBACK_ENABLED=false` to use only the selected provider.
 
-Ollama is the only provider that uses task-complexity routing. A local,
-deterministic classifier selects `think=false` for simple requests and
-`think=true` for complex analysis, debugging, planning, comparison, and
-multi-step requests. Cloud providers ignore this optional capability.
+`ModelRegistry` describes provider, model identifier, capabilities, input
+types, task categories, local/cloud classification, configured availability,
+and defaults. `ModelRouter` deterministically routes Ollama requests to the
+configurable general, coding, tool, vision, or reasoning model. Images are
+accepted by the Ollama adapter as base64 strings and routed only to the
+configured vision model. The orchestrator's current CLI remains text-only.
 
-Ollama model selection is separate from thinking control: simple or ambiguous
-requests use configurable `OLLAMA_SIMPLE_MODEL` (default `llama3.2:3b`);
-clearly complex requests use `OLLAMA_COMPLEX_MODEL` (default `qwen3:4b`).
-The same selected model is retained for a tool-call continuation. A tool is
-executed once by the registry; a continuation failure is not replayed through
-another provider.
+Ollama access is serialized with a provider lock. A model is reused while
+selected; before switching, the previous model is unloaded, and the new request
+uses configured keep-alive and context-window options. Tool continuation retains
+its model by call ID. Missing models are not downloaded. A failed non-vision
+model request may try the configured general model once; vision requests fail
+clearly instead of being sent to a text-only local model.
 
 The provider system prompt explicitly treats tools as optional capabilities.
 Knowledge questions are answered directly, tool-required requests use the
@@ -134,8 +135,7 @@ Application launching is a dedicated allowlisted tool. It accepts only a
 registered application name (`brave` initially), resolves only known
 executable locations, and never invokes a shell or arbitrary user path.
 
-The cloud adapter set is Gemini, OpenAI, Groq, Cerebras, OpenRouter, Mistral,
-and Cohere, followed by Ollama. `ProviderManager` uses only the configured
+The provider set is Gemini, OpenRouter, Grok, and Ollama. `ProviderManager` uses only the configured
 deterministic order and skips providers missing required key/model settings.
 Each adapter owns its SDK-specific request and response translation,
 timeouts, capability differences, and safe error conversion. Unsupported
@@ -238,7 +238,7 @@ The initial TTS implementation uses the OpenAI audio API behind a TTS interface.
 
 - The input layer depends on input interfaces and delivers normalized text to the orchestrator.
 - The orchestrator depends on interfaces for LLM, tools, memory, persistence, permissions, and response handling; it does not contain provider or tool implementation details.
-- Provider adapters are the only components that depend on provider SDKs and API-specific message structures (Google Gen AI SDK for Gemini, OpenAI SDK for OpenAI). Adapters read provider configuration and implement the same provider-neutral LLM interface.
+- Provider adapters own provider SDK and API-specific message structures (Google Gen AI SDK for Gemini and OpenAI-compatible SDK transport for OpenRouter/Grok). Adapters read provider configuration and implement the same provider-neutral LLM interface.
 - The tool registry exposes validated Pydantic tool schemas and metadata to the orchestrator; tools never call the LLM directly.
 - The permission manager runs outside the LLM and must approve or reject every operation requiring authorization before execution.
 - System tools depend on allowlisted subprocess execution and, where required, pywinauto; they cannot invoke arbitrary shell commands.
