@@ -59,6 +59,13 @@ V0 is one release implemented through the following incremental internal stages.
 - supported pywinauto GUI/application automation
 - Playwright with Chromium
 - URL navigation and search
+- reliable browser interaction: click, type, scroll, wait for page state, and handle navigation
+- extract and inspect actual page content instead of relying on screenshots or page titles alone
+- handle dynamic content, redirects, timeouts, stale selectors, and recoverable navigation failures
+- distinguish web research from interactive browser control; choose the appropriate method per task
+- support goal-oriented tasks such as reading official documentation, finding and playing a requested video or playlist, and researching/comparing products and current listings
+- verify outcomes before reporting success; never claim a page was read, a video played, or a price verified without evidence
+- browser evaluation suite covering documentation lookup, media navigation, product comparisons, price discovery, and common failure cases
 
 ## V0.5 — Bounded multi-step execution
 
@@ -66,6 +73,10 @@ V0 is one release implemented through the following incremental internal stages.
 - bounded tool sequences
 - tool-result feedback to the LLM
 - structured failure and recovery behavior
+- explicit task plan and step ledger: original goal, completed steps, current step, pending steps, observations, and blockers
+- pass verified outputs between steps; do not silently treat assumptions as facts
+- stop, retry safely, re-plan, or ask the user when a step fails or the next action is unclear
+- verify task completion against the user's original request
 
 ## V0.6 — Push-to-talk voice
 
@@ -77,9 +88,12 @@ V0 is one release implemented through the following incremental internal stages.
 
 ## Later versions
 
+- **Context-aware task recovery:** if Jarvis gets stuck, loses the thread, or detects that its plan no longer matches observed results, it should recover from the saved task state rather than guess or restart blindly
+- **Progress-aware clarification:** explain what has been completed, identify the exact blocker, and ask a focused question such as, “I've completed X. I couldn't complete Y. Your original request also included Z—should I try another route?”
+- **Hallucination and drift detection:** compare proposed actions and completion claims with the original request, execution history, and tool results; if evidence is missing or contradictory, pause and disclose uncertainty
+- resume an interrupted task from its last verified checkpoint when safe
 - screen understanding
 - richer Windows control
-- task recovery beyond V0 bounds
 - scheduled/background tasks
 - personality and deeper personalization
 - long-running autonomous tasks
@@ -88,4 +102,4 @@ V0 is one release implemented through the following incremental internal stages.
 
 ## Rule
 
-Do not skip directly to later versions because a feature sounds impressive. Each V0 stage should produce a working, testable system.
+Do not skip directly to later versions because a feature sounds impressive. Each V0 stage should produce a working, testable system. Task recovery must be designed around explicit state and evidence, not just a prompt telling the model to “try harder.”
