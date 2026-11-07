@@ -14,23 +14,23 @@ def test_factory_selects_gemini(monkeypatch) -> None:
     assert provider.provider == "gemini"
 
 
-def test_factory_selects_grok(monkeypatch) -> None:
+def test_factory_selects_groq(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.provider_factory.GrokProvider",
-        lambda settings: SimpleNamespace(provider="grok"),
+        "app.provider_factory.GroqProvider",
+        lambda settings: SimpleNamespace(provider="groq"),
     )
-    provider = create_llm_provider(Settings(llm_provider="grok", grok_api_key="key"))
-    assert provider.provider == "grok"
+    provider = create_llm_provider(Settings(llm_provider="groq", groq_api_key="key"))
+    assert provider.provider == "groq"
 
 
 def test_application_factory_path_constructs_configured_provider_chain() -> None:
     settings = Settings(
         llm_provider="gemini",
-        llm_provider_order=("gemini", "openrouter", "grok", "ollama"),
+        llm_provider_order=("gemini", "openrouter", "groq", "ollama"),
         gemini_api_key="gemini-key",
         openrouter_api_key="router-key",
         openrouter_model="router-model",
-        grok_api_key="grok-key",
+        groq_api_key="groq-key",
     )
     provider = create_llm_provider(settings)
-    assert [name for name, _ in provider._providers] == ["gemini", "openrouter", "grok", "ollama"]
+    assert [name for name, _ in provider._providers] == ["gemini", "openrouter", "groq", "ollama"]

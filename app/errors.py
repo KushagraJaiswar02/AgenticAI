@@ -14,6 +14,10 @@ class DatabaseError(ApplicationError):
 class LLMProviderError(ApplicationError):
     """Raised when the configured LLM provider cannot complete a request."""
 
+    def __init__(self, message: str, *, model: str | None = None) -> None:
+        super().__init__(message)
+        self.model = model
+
 
 class InvalidProviderResponseError(ApplicationError):
     """Raised when a provider returns an unexpected response shape."""

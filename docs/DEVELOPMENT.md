@@ -28,17 +28,17 @@ Core dependencies:
 - python-dotenv
 - httpx
 - Google Gen AI SDK
-- OpenAI compatible Python SDK transport (used by OpenRouter and Grok)
+- OpenAI compatible Python SDK transport (used by OpenRouter and Groq)
 - pytest
 
 V0 integration dependencies:
 
-- Gemini, OpenRouter, Grok, and Ollama provider adapters
+- Gemini, OpenRouter, Groq, and Ollama provider adapters
 - ChromaDB
 - Playwright with Chromium
 - pywinauto
 
-Gemini is the default cloud provider. OpenRouter and Grok use `OPENROUTER_API_KEY` and `GROK_API_KEY` respectively. Ollama is local and does not require cloud credentials. The model registry and task router are implemented in `app/model_registry.py` and `app/model_router.py`. No wake-word dependency, unrestricted shell library, remote vector database, or automatic model download is used.
+Gemini is the default cloud provider. OpenRouter and Groq use `OPENROUTER_API_KEY` and `GROQ_API_KEY` respectively. Ollama is local and does not require cloud credentials. The model registry and task router are implemented in `app/model_registry.py` and `app/model_router.py`. No wake-word dependency, unrestricted shell library, remote vector database, or automatic model download is used.
 
 ## 3. Secrets
 

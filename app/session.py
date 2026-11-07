@@ -11,8 +11,10 @@ from typing import Any
 from app.confirmation import ConfirmationRequest
 from app.filesystem_context import FilesystemContext
 from app.browser_context import BrowserContext
+from app.browser_security import BROWSER_TOOL_NAMES
 from app.llm import ConversationMessage, ToolCall
 from app.path_resolver import PathResolver
+from app.youtube_identity import YOUTUBE_TOOLS
 
 
 @dataclass
@@ -32,21 +34,40 @@ class ConversationState:
     history_limit: int = 10
     pending_confirmation: PendingConfirmation | None = None
 
-    def record_turn(self, user_message: str, assistant_message: str) -> None:
+    def record_turn(self, user_message: str, assistant_message: str, *, tool_events: list[ConversationMessage] | None = None) -> None:
+        events = self.pending_tool_events if tool_events is None else tool_events
+        if any(event.content.split(" ", 2)[1] in BROWSER_TOOL_NAMES
+               for event in events if event.content.startswith("TOOL_CALL ")):
+            user_message = "[Browser request omitted from history]"
+            assistant_message = "[Browser response omitted from history]"
+        if any(event.content.split(" ", 2)[1] in YOUTUBE_TOOLS
+               for event in events if event.content.startswith("TOOL_CALL ")):
+            user_message = "[YouTube request omitted from history]"
+            assistant_message = "[YouTube response omitted from history]"
         self.history.append((user_message, assistant_message))
         self.message_history.append(ConversationMessage("user", user_message))
-        self.message_history.extend(self.pending_tool_events)
-        self.pending_tool_events.clear()
+        self.message_history.extend(events)
+        events.clear()
         self.message_history.append(ConversationMessage("assistant", assistant_message))
         if len(self.history) > 50:
             del self.history[:-50]
         self._trim_message_history()
 
-    def record_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> None:
-        self.pending_tool_events.append(ConversationMessage("assistant", f"TOOL_CALL {tool_name} {json.dumps(arguments, sort_keys=True, default=str)}"))
+    def record_tool_call(self, tool_name: str, arguments: dict[str, Any], *, events: list[ConversationMessage] | None = None) -> None:
+        target = self.pending_tool_events if events is None else events
+        if tool_name in BROWSER_TOOL_NAMES | YOUTUBE_TOOLS:
+            arguments = {"redacted": True}
+        target.append(ConversationMessage("assistant", f"TOOL_CALL {tool_name} {json.dumps(arguments, sort_keys=True, default=str)}"))
 
-    def record_tool_result(self, tool_name: str, result: dict[str, Any]) -> None:
-        self.pending_tool_events.append(ConversationMessage("assistant", f"TOOL_RESULT {tool_name} {json.dumps(result, sort_keys=True, default=str)}"))
+    def record_tool_result(self, tool_name: str, result: dict[str, Any], *, events: list[ConversationMessage] | None = None) -> None:
+        target = self.pending_tool_events if events is None else events
+        if tool_name in BROWSER_TOOL_NAMES | YOUTUBE_TOOLS:
+            data = result.get("result")
+            data = data if isinstance(data, dict) else result
+            result = {key: data[key] for key in ("status", "http_status") if key in data}
+            if "success" in data:
+                result["success"] = data["success"]
+        target.append(ConversationMessage("assistant", f"TOOL_RESULT {tool_name} {json.dumps(result, sort_keys=True, default=str)}"))
 
     def recent_messages(self, max_turns: int | None = None) -> list[ConversationMessage]:
         """Return bounded prior dialogue plus factual tool events in order."""

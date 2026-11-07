@@ -3,32 +3,34 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from app.research_budget import ResearchLimits
 
 
 class ConfigurationError(RuntimeError):
     """Raised when required runtime configuration is missing or invalid."""
 
 
-SUPPORTED_PROVIDERS = ("gemini", "openrouter", "grok", "ollama")
+SUPPORTED_PROVIDERS = ("gemini", "openrouter", "groq", "ollama")
 
 
 @dataclass(frozen=True)
 class Settings:
     llm_provider: str = "gemini"
-    llm_provider_order: tuple[str, ...] = ("gemini", "openrouter", "grok", "ollama")
+    llm_provider_order: tuple[str, ...] = ("gemini", "openrouter", "groq", "ollama")
     llm_request_timeout: float = 30.0
     offline_mode: bool = False
     fallback_enabled: bool = True
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.8-flash"
     gemini_timeout: float = 30.0
-    grok_api_key: str | None = None
-    grok_model: str = "grok-3-mini"
-    grok_timeout: float = 30.0
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_timeout: float = 30.0
     openrouter_api_key: str | None = None
     openrouter_model: str = ""
     openrouter_timeout: float = 30.0
@@ -50,6 +52,8 @@ class Settings:
     filesystem_allowed_roots: tuple[str, ...] = ()
     jarvis_workspace: str = ""
     project_root: str = ""
+    research_limits: ResearchLimits = ResearchLimits()
+    youtube_data_api_key: str | None = field(default=None, repr=False)
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -63,8 +67,8 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
     """Load settings from environment variables without logging secret values."""
     load_dotenv(dotenv_path=dotenv_path)
     provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
-    order_value = os.getenv("LLM_PROVIDER_ORDER", "gemini,openrouter,grok,ollama")
-    retired = {"openai", "groq", "cerebras", "mistral", "cohere"}
+    order_value = os.getenv("LLM_PROVIDER_ORDER", "gemini,openrouter,groq,ollama")
+    retired = {"openai", "grok", "cerebras", "mistral", "cohere"}
     provider_order = tuple(
         item.strip().lower() for item in order_value.split(",")
         if item.strip() and item.strip().lower() not in retired
@@ -77,12 +81,20 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
         request_timeout = float(os.getenv("LLM_REQUEST_TIMEOUT", "30"))
         gemini_timeout = float(os.getenv("GEMINI_TIMEOUT", "30"))
         openrouter_timeout = float(os.getenv("OPENROUTER_TIMEOUT", "30"))
-        grok_timeout = float(os.getenv("GROK_TIMEOUT", "30"))
+        groq_timeout = float(os.getenv("GROQ_TIMEOUT", "30"))
         ollama_timeout = float(os.getenv("OLLAMA_TIMEOUT", "120"))
         context_window = int(os.getenv("OLLAMA_CONTEXT_WINDOW", "4096"))
+        research_limits = ResearchLimits(
+            pages=int(os.getenv("JARVIS_RESEARCH_MAX_PAGES", "8")),
+            iterations=int(os.getenv("JARVIS_RESEARCH_MAX_ITERATIONS", "24")),
+            navigations=int(os.getenv("JARVIS_RESEARCH_MAX_NAVIGATIONS", "12")),
+            evidence_chars=int(os.getenv("JARVIS_RESEARCH_MAX_EVIDENCE_CHARS", "16000")),
+            seconds=float(os.getenv("JARVIS_RESEARCH_MAX_SECONDS", "90")),
+            provider_calls=int(os.getenv("JARVIS_RESEARCH_MAX_PROVIDER_CALLS", "8")),
+        )
     except ValueError as exc:
-        raise ConfigurationError("Provider timeouts and context window must be numeric") from exc
-    if min(request_timeout, gemini_timeout, openrouter_timeout, grok_timeout, ollama_timeout) <= 0 or context_window <= 0:
+        raise ConfigurationError("Invalid provider timeout, context window, or research limit") from exc
+    if min(request_timeout, gemini_timeout, openrouter_timeout, groq_timeout, ollama_timeout) <= 0 or context_window <= 0:
         raise ConfigurationError("Timeouts and context window must be positive")
 
     project_root = str(Path(os.getenv("JARVIS_PROJECT_ROOT", "").strip() or os.getcwd()).expanduser().resolve())
@@ -101,9 +113,9 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
         gemini_timeout=gemini_timeout,
-        grok_api_key=os.getenv("GROK_API_KEY"),
-        grok_model=os.getenv("GROK_MODEL", "grok-3-mini").strip(),
-        grok_timeout=grok_timeout,
+        groq_api_key=os.getenv("GROQ_API_KEY"),
+        groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip(),
+        groq_timeout=groq_timeout,
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
         openrouter_model=os.getenv("OPENROUTER_MODEL", "").strip(),
         openrouter_timeout=openrouter_timeout,
@@ -122,4 +134,6 @@ def load_settings(*, dotenv_path: str | None = None) -> Settings:
         filesystem_allowed_roots=tuple(item.strip() for item in allowed_value.split(os.pathsep) if item.strip()),
         jarvis_workspace=workspace_root,
         project_root=project_root,
+        research_limits=research_limits,
+        youtube_data_api_key=os.getenv("YOUTUBE_DATA_API_KEY"),
     )

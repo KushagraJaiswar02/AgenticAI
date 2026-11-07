@@ -1,6 +1,6 @@
 # JARVIS
 
-JARVIS is a local Python terminal assistant with a provider-neutral LLM interface. Gemini is the default cloud provider, with OpenRouter and xAI Grok selectable as alternatives and Ollama as the local provider.
+JARVIS is a local Python terminal assistant with a provider-neutral LLM interface. Gemini is the default cloud provider, with OpenRouter and GroqCloud selectable as alternatives and Ollama as the local provider.
 
 ## Current milestone
 
@@ -15,10 +15,17 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set `GEMINI_API_KEY` in `.env` to use the default cloud provider. OpenRouter uses `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`; Grok uses `GROK_API_KEY` and `GROK_MODEL`. OpenAI SDK is used internally as the compatible transport for OpenRouter and Grok, but direct OpenAI provider support has been removed.
+Set `GEMINI_API_KEY` in `.env` to use the default cloud provider. OpenRouter uses `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`.
+
+For GroqCloud, create a key in the [Groq Console](https://console.groq.com/keys)
+and set `GROQ_API_KEY` in `.env`. The adapter uses GroqCloud's OpenAI-compatible
+endpoint and defaults to `openai/gpt-oss-120b`. Set `GROQ_MODEL=qwen/qwen3.8-27b`
+to try GroqCloud's preview Qwen model. Set `LLM_PROVIDER=groq` to try GroqCloud
+first. If your existing `LLM_PROVIDER_ORDER` lists `grok`, replace that entry
+with `groq` to include GroqCloud in the fallback chain.
 
 Provider failover follows `LLM_PROVIDER_ORDER`, beginning with `LLM_PROVIDER`.
-The default order is `gemini,openrouter,grok,ollama`; unavailable or unconfigured
+The default order is `gemini,openrouter,groq,ollama`; unavailable or unconfigured
 providers are skipped. Set `LLM_FALLBACK_ENABLED=false` to disable fallback. Set
 `JARVIS_OFFLINE_MODE=true` to restrict requests to Ollama, regardless of cloud
 provider configuration.

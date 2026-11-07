@@ -44,10 +44,6 @@ def test_tool_is_not_reexecuted_when_continuation_fails():
     manager = ProviderManager([("first", first), ("second", second)])
     orchestrator = Orchestrator(manager, ToolRegistry([tool]))
 
-    try:
-        orchestrator.process("count")
-    except Exception:
-        pass
-
+    assert orchestrator.process("count") == "The count tool completed, but the provider could not finish the response."
     assert tool.count == 1
     assert len(second.calls) == 0

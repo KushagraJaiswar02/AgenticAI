@@ -67,11 +67,11 @@ def test_factory_skips_missing_cloud_keys_and_keeps_ollama() -> None:
 
 
 def test_factory_includes_configured_providers_in_declared_order() -> None:
-    order = ("gemini", "openrouter", "grok", "ollama")
+    order = ("gemini", "openrouter", "groq", "ollama")
     settings = Settings(
         llm_provider="gemini", llm_provider_order=order,
         gemini_api_key="gemini-key", openrouter_api_key="router-key",
-        openrouter_model="router-model", grok_api_key="grok-key",
+        openrouter_model="router-model", groq_api_key="groq-key",
     )
     constructors = {
         name: (lambda provider_name: lambda _: StubProvider(LLMResponse(text=provider_name)))(name)
@@ -83,9 +83,9 @@ def test_factory_includes_configured_providers_in_declared_order() -> None:
 
 def test_configured_provider_construction_failure_is_not_silent() -> None:
     settings = Settings(
-        llm_provider="grok",
-        llm_provider_order=("grok", "ollama"),
-        grok_api_key="key",
+        llm_provider="groq",
+        llm_provider_order=("groq", "ollama"),
+        groq_api_key="key",
     )
 
     def broken_constructor(_):
@@ -95,7 +95,7 @@ def test_configured_provider_construction_failure_is_not_silent() -> None:
         create_provider_manager(
             settings,
             constructors={
-                "grok": broken_constructor,
+                "groq": broken_constructor,
                 "ollama": lambda _: StubProvider(LLMResponse(text="local")),
             },
         )
@@ -125,6 +125,6 @@ def test_provider_failure_logs_api_status_and_message() -> None:
         status_code = 429
 
     error = APIError("provider rate limit exceeded")
-    manager = ProviderManager([("grok", StubProvider(error=error))])
+    manager = ProviderManager([("groq", StubProvider(error=error))])
     with pytest.raises(LLMProviderError, match="All configured"):
         manager.generate("hello")

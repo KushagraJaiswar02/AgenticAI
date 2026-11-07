@@ -276,10 +276,10 @@ LLM output is untrusted input. A single local policy boundary prevents provider 
 
 ### Decision
 
-The active provider set is Gemini, OpenRouter, xAI Grok, and Ollama. This
+The active provider set is Gemini, OpenRouter, GroqCloud, and Ollama. This
 supersedes the provider choices in ADR-016 and ADR-023 for the current
 implementation. OpenAI's SDK remains only as the OpenAI-compatible transport
-for OpenRouter and Grok. Ollama uses a deterministic configurable model map for
+for OpenRouter and Groq. Ollama uses a deterministic configurable model map for
 general, coding/reasoning, tool, and vision tasks. Offline mode only constructs
 Ollama. Ollama requests are serialized and unload the preceding model before
 switching; no model is downloaded automatically.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from os.path import normcase
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,16 @@ class FilesystemTool(Tool):
 
     def _path(self, value: str, *, exists: bool = False) -> Path:
         return self.boundary.resolve(self.resolver.resolve(value), must_exist=exists)
+
+    def replay_arguments(self, arguments: BaseModel) -> dict[str, Any]:
+        action = super().replay_arguments(arguments)
+        if self.name in {"create_file", "create_directory"}:
+            action.pop("name", None)
+            action.pop("location", None)
+        for key in ("path", "source", "destination"):
+            if action.get(key):
+                action[key] = normcase(action[key])
+        return action
 
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(arguments)

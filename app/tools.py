@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import os
 import operator
@@ -14,7 +15,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -23,6 +24,7 @@ from app.errors import ApplicationError
 from app.llm import ToolDefinition
 from app.audit import AuditLogger
 from app.confirmation import ConfirmationManager, ConfirmationRequest
+from app.research_budget import ResearchLimitReached
 from app.policy import (
     ConfirmationRequiredError,
     PolicyAction,
@@ -46,6 +48,10 @@ class ToolArgumentError(ToolError):
 
 class ToolExecutionError(ToolError):
     """Raised when a tool fails while executing."""
+
+
+class DuplicateToolActionError(ToolError):
+    """An equivalent state-changing action already completed in this turn."""
 
 
 @dataclass(frozen=True)
@@ -77,6 +83,10 @@ class Tool(ABC):
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return dict(arguments)
 
+    def replay_arguments(self, arguments: BaseModel) -> dict[str, Any]:
+        """Describe the validated action for within-turn duplicate detection."""
+        return arguments.model_dump(mode="json")
+
     def preflight(self, arguments: dict[str, Any]) -> None:
         del arguments
 
@@ -89,7 +99,10 @@ class Tool(ABC):
         """Execute the tool with validated arguments."""
         raise NotImplementedError
 
-    def call(self, arguments: dict[str, Any]) -> ToolExecutionResult:
+    def call(
+        self, arguments: dict[str, Any], *,
+        run_dependency: Callable[[str, dict[str, Any]], ToolExecutionResult] | None = None,
+    ) -> ToolExecutionResult:
         """Validate the payload and delegate to the tool implementation."""
         if self.input_model is None:
             raise ToolArgumentError(f"Tool '{self.name}' does not define an input model")
@@ -97,7 +110,16 @@ class Tool(ABC):
             validated = self.input_model.model_validate(arguments)
         except ValidationError as exc:
             raise ToolArgumentError(f"Tool '{self.name}' received invalid arguments") from exc
+        if run_dependency is not None:
+            return self.execute_with_dependencies(validated, run_dependency)
         return self.execute(validated)
+
+    def execute_with_dependencies(
+        self, arguments: BaseModel,
+        run_dependency: Callable[[str, dict[str, Any]], ToolExecutionResult],
+    ) -> ToolExecutionResult:
+        """Run after authorization and validation, with registry access for prerequisites."""
+        return self.execute(arguments)
 
 
 class ToolRegistry:
@@ -141,6 +163,7 @@ class ToolRegistry:
                         name: {
                             "type": value.get("type", "string"),
                             "description": value.get("description", ""),
+                            **({"items": value["items"]} if "items" in value else {}),
                         }
                         for name, value in getattr(tool.input_model, "model_json_schema", lambda: {"properties": {}})().get("properties", {}).items()
                     },
@@ -151,7 +174,7 @@ class ToolRegistry:
             for tool in self._tools.values()
         ]
 
-    def execute(self, name: str, arguments: dict[str, Any], *, request_id: str | None = None, confirmation_response: str | None = None, confirmation_request: ConfirmationRequest | None = None, provider: str | None = None) -> ToolExecutionResult:
+    def execute(self, name: str, arguments: dict[str, Any], *, request_id: str | None = None, confirmation_response: str | None = None, confirmation_request: ConfirmationRequest | None = None, provider: str | None = None, completed_actions: set[str] | None = None) -> ToolExecutionResult:
         """Execute through the sole policy-enforced registry path."""
         tool = self.get(name)
         if tool is None:
@@ -160,6 +183,21 @@ class ToolRegistry:
         if name == "create_file":
             self._logger.debug("LLM tool arguments: %s", self._safe_filesystem_arguments(original_arguments))
         arguments = tool.normalize_arguments(arguments)
+        replay_key = None
+        if completed_actions is not None and tool.risk_level != RiskLevel.SAFE and tool.input_model is not None:
+            try:
+                validated = tool.input_model.model_validate(arguments)
+            except ValidationError:
+                # Keep the existing preflight, policy, and schema-error paths.
+                pass
+            else:
+                replay_key = json.dumps([name, tool.replay_arguments(validated)], sort_keys=True)
+                if replay_key in completed_actions:
+                    self.audit_logger.record(
+                        request_id=request_id, tool_name=name, risk_level=tool.risk_level.value,
+                        execution_result="not_executed", reason="duplicate_action", provider=provider,
+                    )
+                    raise DuplicateToolActionError(f"The same {name} action already completed in this turn")
         if name == "create_file":
             self._logger.debug("Normalized create_file arguments: %s", self._safe_filesystem_arguments(arguments))
             self._logger.debug("Resolved filesystem target: %s", arguments.get("path"))
@@ -186,21 +224,35 @@ class ToolRegistry:
                 self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=True, confirmation_result=confirmation_result, execution_result="not_executed", provider=provider, duration=time.perf_counter() - started)
                 raise PolicyDeniedError("Confirmation was rejected, expired, or did not match this exact action")
         execution_state = "failed"
+        navigation_audit = {}
         try:
-            result = tool.call(arguments)
+            result = tool.call(
+                arguments,
+                run_dependency=lambda dependency, args: self.execute(
+                    dependency, args, request_id=action_id, provider=provider,
+                ),
+            )
             if not isinstance(result, ToolExecutionResult):
                 raise ToolExecutionError(f"Tool '{name}' returned an invalid result structure")
             result = replace(result, tool_name=name)
             execution_state = "completed" if result.success else "failed"
+            if name in {"open_url", "search_web"} and result.data:
+                status = result.data.get("http_status")
+                if type(status) is int and 400 <= status <= 599:
+                    navigation_audit["http_status"] = status
+                elif result.data.get("status") == "timeout":
+                    navigation_audit["reason"] = "navigation_timeout"
+            if result.success and replay_key is not None:
+                completed_actions.add(replay_key)
             return result
-        except ToolExecutionError:
+        except (ToolExecutionError, ResearchLimitReached):
             raise
         except ApplicationError:
             raise
         except Exception as exc:  # pragma: no cover - defensive fallback
             raise ToolExecutionError(f"Tool '{name}' failed unexpectedly") from exc
         finally:
-            self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=confirmation_required, confirmation_result=confirmation_result, execution_result=execution_state, provider=provider, duration=time.perf_counter() - started)
+            self.audit_logger.record(request_id=action_id, tool_name=name, risk_level=decision.risk_level.value, arguments=arguments, policy_decision=decision.action.value, confirmation_required=confirmation_required, confirmation_result=confirmation_result, execution_result=execution_state, provider=provider, duration=time.perf_counter() - started, **navigation_audit)
 
     @staticmethod
     def _safe_filesystem_arguments(arguments: dict[str, Any]) -> dict[str, Any]:

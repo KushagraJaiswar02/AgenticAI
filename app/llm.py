@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.errors import LLMProviderError
@@ -26,6 +26,23 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
     call_id: str | None = None
+    _turn: ProviderTurn | None = field(default=None, repr=False, compare=False)
+    _receipt: object | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass
+class ProviderTurn:
+    """Transport state carried by a single generation and its continuations."""
+
+    manager_token: object | None = None
+    provider_name: str | None = None
+    receipt: object | None = None
+    model: str | None = None
+    backend_model: str | None = None
+    backend_provider: str | None = None
+    backend_endpoint: str | None = None
+    messages: list[Any] = field(default_factory=list)
+    tools: list[ToolDefinition] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -58,6 +75,7 @@ class LLMProvider(ABC):
         think: bool | None = None,
         conversation: list[ConversationMessage] | None = None,
         images: list[str] | None = None,
+        system_instruction: str | None = None,
     ) -> LLMResponse:
         """Generate a response for a prompt, optionally with available tools or a tool result."""
         raise NotImplementedError

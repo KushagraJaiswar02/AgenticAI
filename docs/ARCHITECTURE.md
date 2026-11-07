@@ -90,9 +90,9 @@ Conceptually:
 generate(prompt) -> normalized LLM response
 ```
 
-Gemini is the default cloud provider. OpenRouter and xAI Grok are selectable cloud alternatives; Ollama is the local provider. Provider logic stays inside each adapter; the orchestrator depends only on the LLM interface and never branches on provider-specific implementation details.
+Gemini is the default cloud provider. OpenRouter and GroqCloud are selectable cloud alternatives; Ollama is the local provider. Provider logic stays inside each adapter; the orchestrator depends only on the LLM interface and never branches on provider-specific implementation details.
 
-Gemini defaults to `gemini-3.8-flash` (`GEMINI_MODEL`). OpenRouter uses `OPENROUTER_MODEL`; Grok uses `GROK_MODEL` (default `grok-3-mini`). `GROK_API_KEY` is the xAI credential. The OpenAI SDK remains a transport dependency for OpenAI-compatible OpenRouter and xAI endpoints; JARVIS has no direct OpenAI provider.
+Gemini defaults to `gemini-3.8-flash` (`GEMINI_MODEL`). OpenRouter uses `OPENROUTER_MODEL`; Groq uses `GROQ_MODEL` (default `openai/gpt-oss-120b`). `GROQ_API_KEY` is the GroqCloud credential. The OpenAI SDK remains a transport dependency for OpenAI-compatible OpenRouter and GroqCloud endpoints; JARVIS has no direct OpenAI provider.
 
 For V0.2 tooling, providers expose native function/tool-calling capabilities through the same provider-neutral contract:
 - the LLM decides whether a tool is needed and which tool to call
@@ -112,6 +112,23 @@ configuration, and returns a controlled `LLMProviderError` if all candidates
 fail. `JARVIS_OFFLINE_MODE=true` constructs only Ollama. Set
 `LLM_FALLBACK_ENABLED=false` to use only the selected provider.
 
+Failover applies to initial generation. Once a provider returns a tool call,
+its continuation stays with that provider and carries the original dialogue,
+native call and result messages, and selected model for the turn. A missing
+or consumed continuation is rejected. If continuation fails after a tool
+completed, JARVIS reports that the tool ran and closes the turn. OpenRouter's
+configured router remains in use. If it reports a different backend model on
+continuation, JARVIS stops rather than dispatching another tool.
+
+The tool interface accepts one call per model response. Adapters reject a
+batch before any call in it can run. Within a turn, an exact replay of a
+completed call ID receives the cached result. Reusing a completed ID with
+different arguments is rejected. The registry also blocks equivalent
+completed state-changing actions with new or missing IDs, using the tool's
+normalized, validated arguments. A failed schema check does not reserve an
+ID. Reads with distinct or missing IDs remain independent operations. This
+guard covers a single turn and keeps no durable execution ledger.
+
 `ModelRegistry` describes provider, model identifier, capabilities, input
 types, task categories, local/cloud classification, configured availability,
 and defaults. `ModelRouter` deterministically routes Ollama requests to the
@@ -121,10 +138,10 @@ configured vision model. The orchestrator's current CLI remains text-only.
 
 Ollama access is serialized with a provider lock. A model is reused while
 selected; before switching, the previous model is unloaded, and the new request
-uses configured keep-alive and context-window options. Tool continuation retains
-its model by call ID. Missing models are not downloaded. A failed non-vision
-model request may try the configured general model once; vision requests fail
-clearly instead of being sent to a text-only local model.
+uses configured keep-alive and context-window options. Tool continuation
+retains its model in the turn state. A missing model on an initial text
+request may trigger one attempt with the configured general model. A missing
+model during continuation or vision input ends that request.
 
 The provider system prompt explicitly treats tools as optional capabilities.
 Knowledge questions are answered directly, tool-required requests use the
@@ -135,7 +152,7 @@ Application launching is a dedicated allowlisted tool. It accepts only a
 registered application name (`brave` initially), resolves only known
 executable locations, and never invokes a shell or arbitrary user path.
 
-The provider set is Gemini, OpenRouter, Grok, and Ollama. `ProviderManager` uses only the configured
+The provider set is Gemini, OpenRouter, Groq, and Ollama. `ProviderManager` uses only the configured
 deterministic order and skips providers missing required key/model settings.
 Each adapter owns its SDK-specific request and response translation,
 timeouts, capability differences, and safe error conversion. Unsupported
@@ -238,7 +255,7 @@ The initial TTS implementation uses the OpenAI audio API behind a TTS interface.
 
 - The input layer depends on input interfaces and delivers normalized text to the orchestrator.
 - The orchestrator depends on interfaces for LLM, tools, memory, persistence, permissions, and response handling; it does not contain provider or tool implementation details.
-- Provider adapters own provider SDK and API-specific message structures (Google Gen AI SDK for Gemini and OpenAI-compatible SDK transport for OpenRouter/Grok). Adapters read provider configuration and implement the same provider-neutral LLM interface.
+- Provider adapters own provider SDK and API-specific message structures (Google Gen AI SDK for Gemini and OpenAI-compatible SDK transport for OpenRouter/Groq). Adapters read provider configuration and implement the same provider-neutral LLM interface.
 - The tool registry exposes validated Pydantic tool schemas and metadata to the orchestrator; tools never call the LLM directly.
 - The permission manager runs outside the LLM and must approve or reject every operation requiring authorization before execution.
 - System tools depend on allowlisted subprocess execution and, where required, pywinauto; they cannot invoke arbitrary shell commands.

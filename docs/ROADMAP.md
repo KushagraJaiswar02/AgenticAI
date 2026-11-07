@@ -6,7 +6,7 @@ V0 is one release implemented through the following incremental internal stages.
 
 ## Current provider milestone
 
-The active provider set is Gemini, OpenRouter, xAI Grok, and Ollama. The
+The active provider set is Gemini, OpenRouter, GroqCloud, and Ollama. The
 Milestone 1 provider cleanup supersedes the historical provider lists in the
 earlier V0.1 and V0.2/V0.3 stage notes below. Ollama task routing and sequential
 model lifecycle management are implemented; screenshot/image input is
@@ -25,7 +25,7 @@ available through the provider boundary, while the current CLI remains text-only
 
 - Python 3.12 Windows runtime
 - configuration and logging
-- provider-neutral LLM interface with Gemini, OpenRouter, Grok, and Ollama adapters
+- provider-neutral LLM interface with Gemini, OpenRouter, Groq, and Ollama adapters
 - basic orchestrator
 - text input and response
 
@@ -44,7 +44,7 @@ available through the provider boundary, while the current CLI remains text-only
 
 ## V0.2/V0.3 stabilization
 
-- configurable Gemini/OpenRouter/Grok/Ollama provider failover
+- configurable Gemini/OpenRouter/Groq/Ollama provider failover
 - `llama3.2:3b` for general conversation
 - `qwen3:4b` for coding, reasoning, and tools
 - `gemma3:4b` for image input
@@ -74,6 +74,21 @@ available through the provider boundary, while the current CLI remains text-only
 - support goal-oriented tasks such as reading official documentation, finding and playing a requested video or playlist, and researching/comparing products and current listings
 - verify outcomes before reporting success; never claim a page was read, a video played, or a price verified without evidence
 - browser evaluation suite covering documentation lookup, media navigation, product comparisons, price discovery, and common failure cases
+
+### Browser Milestone 1 — Intelligent navigation and targeted extraction
+
+- VERIFIED — Topic and heading-based excerpts, with per-topic match metadata and bounded output. Checked against live React documentation and a long controlled Chromium page.
+- VERIFIED — Same-origin link discovery and navigation to a dedicated article. Checked through the orchestrator on a controlled Chromium site. Live Gemini also selected the dedicated Hulk article directly.
+- VERIFIED — Multi-page research with request-scoped observations and source URLs. Checked against two live React documentation pages with Gemini. When the continuation flag is omitted, an already observed user-supplied URL and a remaining explicit source keep research open.
+- VERIFIED — Post-observation tool and URL restrictions. Checked on a malicious fixture with real Chromium and scripted tool calls. Browser destination policy and registry checks still apply to permitted navigation.
+- IMPLEMENTED — Terminal source-grounding instructions across the research tool flow. The text-only terminal Gemini path has live coverage. Other providers still need live research round-trip verification.
+- NOT STARTED — Cross-site search-result discovery and interactive browsing. Research can already read multiple sites when the user supplies their URLs.
+
+### Provider reliability milestone — Browser synthesis recovery
+
+- IMPLEMENTED — Structured provider diagnostics distinguish daily quota, rate limits, authentication, permission, server, transport, and response errors without printing upstream request or response bodies.
+- VERIFIED — For eligible outages after a browser-only turn has collected text, the next configured provider can summarize the existing evidence with tools disabled. A real Chromium run injected a Gemini quota response, observed a live OpenRouter 429, and recovered through live Groq without reopening the page. Recovery shares the original request ID and leaves the native tool transcript with its original owner.
+- NOT STARTED — Transfer of a tool-enabled conversation to a different provider. Without browser evidence, or after a non-browser action, active tool turns continue to require their original provider.
 
 ## V0.5 — Bounded multi-step execution
 

@@ -34,7 +34,7 @@ class ModelRegistry:
         self._models = (
             ModelSpec("gemini", settings.gemini_model, frozenset({"chat", "tools"}), frozenset({"text"}), frozenset({"general", "coding", "tools", "reasoning"}), False, bool(settings.gemini_api_key), True),
             ModelSpec("openrouter", settings.openrouter_model, frozenset({"chat", "tools"}), frozenset({"text"}), frozenset({"general", "coding", "tools", "reasoning"}), False, bool(settings.openrouter_api_key and settings.openrouter_model)),
-            ModelSpec("grok", settings.grok_model, frozenset({"chat", "tools"}), frozenset({"text"}), frozenset({"general", "coding", "tools", "reasoning"}), False, bool(settings.grok_api_key)),
+            ModelSpec("groq", settings.groq_model, frozenset({"chat", "tools"}), frozenset({"text"}), frozenset({"general", "coding", "tools", "reasoning"}), False, bool(settings.groq_api_key and settings.groq_model)),
             ModelSpec("ollama", settings.ollama_general_model, frozenset({"chat"}), frozenset({"text"}), frozenset({"general"}), True, local_available(settings.ollama_general_model), True),
             ModelSpec("ollama", settings.ollama_coding_model, frozenset({"chat", "tools"}), frozenset({"text"}), frozenset({"coding", "tools", "reasoning"}), True, local_available(settings.ollama_coding_model)),
             ModelSpec("ollama", settings.ollama_tool_model, frozenset({"chat", "tools"}), frozenset({"text"}), frozenset({"tools"}), True, local_available(settings.ollama_tool_model)),

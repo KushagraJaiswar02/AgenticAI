@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.browser_security import BROWSER_TOOL_NAMES
+from app.youtube_identity import YOUTUBE_TOOLS
 
 class AuditLogger:
     def __init__(self, logger: logging.Logger | None = None) -> None:
@@ -14,6 +16,8 @@ class AuditLogger:
         self.records: list[dict[str, Any]] = []
 
     def record(self, **record: Any) -> None:
+        if record.get("tool_name") in BROWSER_TOOL_NAMES | YOUTUBE_TOOLS and "arguments" in record:
+            record["arguments"] = "[REDACTED]"
         safe = {key: self._sanitize(value, key) for key, value in record.items()}
         safe.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
         self.records.append(safe)

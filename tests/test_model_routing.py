@@ -23,12 +23,12 @@ def test_task_mappings_are_configurable():
 
 
 def test_registry_exposes_capabilities_and_availability():
-    settings = Settings(gemini_api_key="configured", openrouter_api_key="configured", openrouter_model="router", grok_api_key="configured")
+    settings = Settings(gemini_api_key="configured", openrouter_api_key="configured", openrouter_model="router", groq_api_key="configured")
     registry = ModelRegistry(settings, ollama_models={"llama3.2:3b"})
     assert registry.find("ollama", "llama3.2:3b").available
     assert not registry.find("ollama", "qwen3:4b").available
     assert "image" in registry.find("ollama", "gemma3:4b").input_types
-    assert registry.find("grok", "grok-3-mini").available
+    assert registry.find("groq", "openai/gpt-oss-120b").available
 
 
 def test_offline_mode_constructs_only_local_provider():
@@ -38,15 +38,15 @@ def test_offline_mode_constructs_only_local_provider():
 
 
 def test_explicit_cloud_provider_is_first_and_fallback_can_be_disabled():
-    names = ("gemini", "openrouter", "grok", "ollama")
+    names = ("gemini", "openrouter", "groq", "ollama")
     constructors = {name: (lambda provider_name: lambda _: type("P", (), {"generate": lambda self, prompt, **kwargs: LLMResponse(text=provider_name)})())(name) for name in names}
     settings = Settings(
-        llm_provider="grok", llm_provider_order=names, grok_api_key="key",
+        llm_provider="groq", llm_provider_order=names, groq_api_key="key",
         gemini_api_key="key", openrouter_api_key="key", openrouter_model="router",
     )
     manager = create_provider_manager(settings, constructors=constructors)
-    assert [name for name, _ in manager._providers] == ["grok", "gemini", "openrouter", "ollama"]
+    assert [name for name, _ in manager._providers] == ["groq", "gemini", "openrouter", "ollama"]
     manager = create_provider_manager(Settings(
-        llm_provider="grok", llm_provider_order=names, grok_api_key="key", fallback_enabled=False,
+        llm_provider="groq", llm_provider_order=names, groq_api_key="key", fallback_enabled=False,
     ), constructors=constructors)
-    assert [name for name, _ in manager._providers] == ["grok"]
+    assert [name for name, _ in manager._providers] == ["groq"]

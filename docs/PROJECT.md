@@ -5,7 +5,7 @@
 JARVIS is a personal desktop AI assistant designed to interact with the user through text and voice, reason about requests using an LLM, retrieve relevant memory, and execute controlled actions on the user's computer and connected services.
 
 The project is a local Python application using Gemini by default, with
-OpenRouter and xAI Grok as selectable cloud providers and Ollama as its local
+OpenRouter and GroqCloud as selectable cloud providers and Ollama as its local
 provider. Local model selection is task-based and configurable.
 
 ## 2. Core Principle
@@ -60,8 +60,8 @@ accepted.
 - Runtime: Python 3.12 on Windows desktop.
 - Architecture: modular monolith.
 - Core libraries: SQLite, SQLAlchemy, Pydantic, python-dotenv, httpx, and pytest.
-- LLM providers: Gemini, OpenRouter, xAI Grok, and Ollama, behind a provider-neutral interface.
-- Cloud credentials: `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, and `GROK_API_KEY`.
+- LLM providers: Gemini, OpenRouter, GroqCloud, and Ollama, behind a provider-neutral interface.
+- Cloud credentials: `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, and `GROQ_API_KEY`.
 - Local defaults: `llama3.2:3b`, `qwen3:4b`, and `gemma3:4b`, with configurable task mappings.
 - Semantic memory: local ChromaDB behind a replaceable embeddings interface and memory-store boundary.
 - Voice: OpenAI audio API initially for STT and TTS, behind STT/TTS interfaces; push-to-talk only.
@@ -70,7 +70,7 @@ accepted.
 - Validation: Pydantic schemas.
 
 Unrestricted shell execution and unrestricted filesystem access are not part of V0.
-The OpenAI-compatible SDK is used only as a transport by OpenRouter and Grok adapters. No direct OpenAI provider is registered. API keys are environment-only and are not logged.
+The OpenAI-compatible SDK is used only as a transport by OpenRouter and Groq adapters. No direct OpenAI provider is registered. API keys are environment-only and are not logged.
 
 ## 4. v0 Scope
 

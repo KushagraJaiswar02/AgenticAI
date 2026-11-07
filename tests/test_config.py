@@ -28,13 +28,13 @@ def test_default_model_is_configurable_default(monkeypatch: pytest.MonkeyPatch) 
     assert load_settings(dotenv_path=str(Path("missing.env"))).gemini_model == "gemini-3.8-flash"
 
 
-def test_grok_configuration_uses_xai_credential(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_PROVIDER", "grok")
-    monkeypatch.setenv("GROK_API_KEY", "test-key")
-    monkeypatch.setenv("GROK_MODEL", "test-grok")
+def test_groq_configuration_uses_groqcloud_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_MODEL", "test-groq")
     settings = load_settings(dotenv_path=str(Path("missing.env")))
-    assert settings.grok_api_key == "test-key"
-    assert settings.grok_model == "test-grok"
+    assert settings.groq_api_key == "test-key"
+    assert settings.groq_model == "test-groq"
 
 
 def test_workspace_configuration_loads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_ollama_models_and_timeouts_are_configurable(monkeypatch: pytest.MonkeyP
     assert settings.ollama_complex_timeout == 70
 
 
-@pytest.mark.parametrize("provider", ["gemini", "openrouter", "grok", "ollama"])
+@pytest.mark.parametrize("provider", ["gemini", "openrouter", "groq", "ollama"])
 def test_supported_providers_are_valid_preferred_providers(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,

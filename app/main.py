@@ -11,6 +11,7 @@ from app.input import read_input
 from app.logging_config import configure_logging
 from app.orchestrator import Orchestrator
 from app.provider_factory import create_llm_provider
+from app.provider_failures import ProviderUnavailableError
 from app.response import render_response
 from app.tools import (
     CalculatorTool,
@@ -26,6 +27,7 @@ from app.filesystem_tools import create_filesystem_tools
 from app.filesystem_context import FilesystemContext
 from app.browser_context import BrowserContext
 from app.browser_tools import create_browser_tools
+from app.youtube_tools import create_youtube_tools
 from app.session import ConversationState
 
 
@@ -55,12 +57,20 @@ def main() -> int:
             OpenApplicationTool(),
             *create_filesystem_tools(boundary, filesystem_context),
             *create_browser_tools(browser_context),
+            *create_youtube_tools(None if settings.offline_mode else settings.youtube_data_api_key),
         ]
     )
     state = ConversationState(filesystem_context=filesystem_context, browser_context=browser_context)
-    orchestrator = Orchestrator(llm_provider, tool_registry=tool_registry, logger=logger, confirmation_callback=lambda prompt: input(f"JARVIS: {prompt}\n> "), state=state)
+    orchestrator = Orchestrator(
+        llm_provider, tool_registry=tool_registry, logger=logger,
+        confirmation_callback=lambda prompt: input(f"JARVIS: {prompt}\n> "),
+        state=state, research_limits=getattr(settings, "research_limits", None),
+    )
 
-    return _run_cli_loop(orchestrator, logger)
+    try:
+        return _run_cli_loop(orchestrator, logger)
+    finally:
+        browser_context.close()
 
 
 def _run_cli_loop(orchestrator: Orchestrator, logger: logging.Logger) -> int:
@@ -77,9 +87,9 @@ def _run_cli_loop(orchestrator: Orchestrator, logger: logging.Logger) -> int:
             return 0
         try:
             print(render_response(orchestrator.process(message)))
+        except ProviderUnavailableError as exc:
+            print(f"JARVIS: {exc}")
         except LLMProviderError:
-            logger.warning("LLM provider unavailable and no local capability matched")
-            logger.debug("LLM provider failure details", exc_info=True)
             print("JARVIS: I could not process that request.")
         except UnexpectedApplicationError as exc:
             logger.exception("Request failed: %s", exc)
